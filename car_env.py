@@ -88,7 +88,7 @@ class TrafficEnv(gym.Env):
         'video.frames_per_second': 30
     }
 
-    def __init__(self,car,driver,speed = 0, target_speed =100, sample_time_basic = 0.25,sample_time_action = 1,epsilon = 1e-6):
+    def __init__(self,car,driver,num_boundaries=5,speed = 0, target_speed =100, sample_time_basic = 0.25,sample_time_action = 1,epsilon = 1e-6,discount_factor=0.9,always_penalize_warning=False):
         self.car = car
         self.driver = driver
         self.action_space = VALID_ACTIONS
@@ -106,7 +106,7 @@ class TrafficEnv(gym.Env):
 
         # Create the system boundaries
         self.boundaries = []
-        for i in range(5):
+        for i in range(num_boundaries):
             boundary = Boundary((i+1)*1000)
             self.boundaries.append(boundary)
         
@@ -137,9 +137,15 @@ class TrafficEnv(gym.Env):
 
         self.warning_action = NOT_WARN
 
+        self.discount_factor = discount_factor                  # for discounting the reward in accumulating the reward in driver intervening
+        self.accumulated_reward = 0
+
+        self.driver_emergency_action = False
+
+        self.always_penalize_warning = always_penalize_warning
+
     def reset(self):
-        self.car.position = 0
-        self.car.speed = 0    
+        self.car.reset()
 
         self.index_boundary_ahead = 0
         self.update_state()
@@ -149,17 +155,23 @@ class TrafficEnv(gym.Env):
         self.crash = False
         self.near_crash = False 
 
+        self.driver_emergency_action = False
+
         self.driver.reset()
 
-        return 
+        self.driver.driver_mode = DriverMode.DRIVE_TO_SPEED
+        self.car.driving_mode = CarDrivingMode.DRIVER_INTEVENTION
 
-    def step(self,action):
+        return np.array([self.state.time_to_collision,self.state.confidence_level])
+
+    def step(self,action,enforce_safety=False):
         """
         This function simulates executing one action (WARN or NOT_WARN) to the environment
         """
         assert(action in self.action_space)
-        self.warning_action = action
+        self.warning_action = action 
 
+        reward = 0
         # Take-over request (i.e. the warning) should only be issued when driver is distracted, 
         # i.e. the car is in autonomous driving mode
         if self.driver.driver_mode == DriverMode.BE_DISTRACTED and action == WARN:
@@ -175,9 +187,11 @@ class TrafficEnv(gym.Env):
         # Update boundary status
         for boundary in self.boundaries:
             boundary.update_status(self.sample_time_basic)
+
         # Update ther index of the boundary ahead
         if self.car.position > self.boundaries[self.index_boundary_ahead].position and self.car.lane != Lane.RIGHT:
             self.index_boundary_ahead += 1
+            
 
         # Update the state
         self.state.time_to_collision, self.state.confidence_level = self.update_state()        
@@ -202,21 +216,37 @@ class TrafficEnv(gym.Env):
             self.crash = True  
         else:
             self.crash = False     
-
-         # Determine the reward based on current state 
+        
+        # Update the reward based on current state 
         if self.crash:
-            reward = -10
+            reward = -10            # get a large penalty for a crash 
         elif self.near_crash:
-            reward = -1
-        else:
-            reward = 0            
+            reward = -1             # get a penalty for a near-crash
+        
+        done = False
 
+        if self.driver.driver_mode in [DriverMode.SWERVE_TO_LEFT, DriverMode.EMERGENCY_BRAKE]:   
+            self.driver_emergency_action = True 
+        else:
+            if self.driver_emergency_action:
+                # Emergency action ends, so an episode terminates
+                done = True
+                if self.car.lane != Lane.RIGHT:
+                    reward = 10      # get a reward after successfully circumventing a boundary 
+            self.driver_emergency_action = False
+
+        
         if self.crash or self.index_boundary_ahead > len(self.boundaries)-1:
-            done = True
+            game_over = True
+            done = True       # An episode is also done if there is a crash regardless of whether driver intervenes or not
         else:
-            done = False      
+            game_over = False      
 
-        return np.array([self.state.time_to_collision,self.state.confidence_level]), reward, done, self.near_crash
+        if self.always_penalize_warning and action== WARN:
+            reward -= 0.4
+
+        
+        return np.array([self.state.time_to_collision,self.state.confidence_level]), reward, done, game_over
 
     def calculate_the_reward(self,action,state_memory,index_next_state):
         """
@@ -349,7 +379,7 @@ class TrafficEnv(gym.Env):
             
             # label and circle for denoting whether the driver acknowledges a warning
             driver_acknowledge_label = pyglet.text.Label('Driver Acknowledge', font_size=13,
-                x=200, y=top_y, anchor_x='left', anchor_y='bottom',
+                x=180, y=top_y, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(driver_acknowledge_label)
@@ -378,27 +408,34 @@ class TrafficEnv(gym.Env):
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_FN)
 
-            # label for driver mode 
-            self.label_driver_mode = pyglet.text.Label('Driver Mode: '+ 'Stop', font_size=13,
-                x= 30, y=top_y-80, anchor_x='left', anchor_y='bottom',
-                # color=(128,128,128,255))
-                color=(0,0,0,255))
-            self.viewer.add_label(self.label_driver_mode)
-
+           
             # label for number of near crashes
             self.label_num_near_crashes = pyglet.text.Label('#Near Crashes: '+ '0', font_size=13,
-                x= 30, y=top_y-120, anchor_x='left', anchor_y='bottom',
+                x= 30, y=top_y-80, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_num_near_crashes)
 
             # label for crashes
             self.label_num_crashes = pyglet.text.Label('#Crashes: '+ '0', font_size=13,
-                x= 200, y=top_y-120, anchor_x='left', anchor_y='bottom',
+                x= 200, y=top_y-80, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_num_crashes)
 
+             # label for driver mode 
+            self.label_driver_mode = pyglet.text.Label('Driver Mode: '+ 'Stop', font_size=13,
+                x= 30, y=top_y-120, anchor_x='left', anchor_y='bottom',
+                # color=(128,128,128,255))
+                color=(0,0,0,255))
+            self.viewer.add_label(self.label_driver_mode)
+
+             # label for driver's trust 
+            self.label_driver_trust = pyglet.text.Label('Driver\'s Trust: '+ '1.00', font_size=13,
+                x= 30, y=top_y-160, anchor_x='left', anchor_y='bottom',
+                # color=(128,128,128,255))
+                color=(0,0,0,255))
+            self.viewer.add_label(self.label_driver_trust)
             
 
             # Ego Car
@@ -468,6 +505,7 @@ class TrafficEnv(gym.Env):
         self.label_driver_mode.text ='Driver Mode: '+ self.driver.driver_mode.name
         self.label_num_near_crashes.text = '#Near Crashes: '+ str(self.num_near_crashes)
         self.label_num_crashes.text = '#Crashes: '+ str(self.num_crashes)
+        self.label_driver_trust.text = "Driver\'s Trust: {:.2f}".format(self.driver.probability_to_acknowledge)  #'Driver\'s Trust: '+ str(self.driver.probability_to_acknowledge)
         return self.viewer.render(return_rgb_array = mode=='rgb_array')
 
 class Driver():
@@ -511,8 +549,14 @@ class Driver():
         self.target_speed = 120
 
     def reset(self):
+        self.false_positive_warnings = 0
+        self.false_negative_warnings = 0
+
+        self.total_warnings = 0
+
         self.warning_acknowledged = False
         self.time_to_decision = float('inf')
+        self.steer_intensity = 0
         self.driver_mode = DriverMode.STOP
 
     def drive_to_speed(self,car,sample_time,target_speed=120):   
@@ -695,12 +739,17 @@ class Driver():
         self._brake_to_stop(car)
 
     def update_probability_to_acknowledge(self):
+        # if self.total_warnings == 0:
+        #     self.probability_to_acknowledge = 1
+        # else:
         self.probability_to_acknowledge = 1 - (self.false_positive_warnings + self.false_negative_warnings) \
-                                      /(self.total_warnings + self.false_negative_warnings)
+                                      /(self.total_warnings + self.false_negative_warnings+1)
     
     def update_status(self,car,time_to_collision,relative_distance,relative_velocity,warning_action,current_time,sample_time):
         """         
         """
+        self.update_probability_to_acknowledge()
+
         if self.driver_mode == DriverMode.STOP:
             self._brake_to_stop(car)
         elif self.driver_mode == DriverMode.DRIVE_TO_SPEED:
@@ -761,6 +810,21 @@ class Car():
         self.MAX_SPEED = 120
         
         self.lane = Lane.RIGHT
+
+    def reset(self):
+        self.position = 0
+        self.position_lateral =0
+
+        self.speed = 0   
+        self.speed_lateral = 0
+
+        self.acceleration_longitudinal = 0
+        self.acceleration_lateral = 0
+
+        self.lane = Lane.RIGHT 
+
+        self.accel_intensity = 0
+        self.brake_intensity = 0.2
 
     def update_control_intensity(self,driver):
         """

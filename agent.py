@@ -5,6 +5,7 @@ from tiles3 import IHT, tiles
 from car_env import WARN, NOT_WARN
 
 from collections import namedtuple 
+import h5py
 
 # Tile_Paras = namedtuple('Tile_Paras',['maxSize','num_tilings','num_grids','feature_vec_zero',''])
 
@@ -20,19 +21,27 @@ class Q_Agent_LFA():
     An agent for off-policy q learning with linear function approximation and tile coding for the features
     """
     def __init__(self,num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
-                learning_rate = 0.01, discount_factor = 0.9):   
+                learning_rate = 0.01, discount_factor = 0.9,train_result_file = None):   
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
 
         self.state_bounds = state_bounds
         self.nA = num_actions
         # for using tile coding to construct the feature vector
+        self.tile_coding = tile_coding
         self.maxSize = tile_coding['maxSize']
         self.iht = IHT(self.maxSize)  #initialize the hash table 
         self.num_tilings = tile_coding['num_tilings']
         self.tile_scale = tile_coding['num_grids']/(state_bounds[1]-state_bounds[0])
         self.feature_vec_zero = np.zeros(self.maxSize)
-        self.w = np.zeros(self.maxSize)  
+
+        if not train_result_file:
+            self.w = np.zeros(self.maxSize) 
+        else:
+            hf = h5py.File(train_result_file,'r')
+            trained_model = hf.get('trained_model')
+            self.w = trained_model.get('w').value
+            hf.close()
 
     def epsilon_greedy_policy(self,state, epsilon):
         # Get the probabilities for all the actions
@@ -80,11 +89,36 @@ class Q_Agent_LFA():
         for tile in tiles:
             self.w[tile] += self.learning_rate*td_error
 
+class Q_Lambda_LFA(Q_Agent_LFA):
+    def __init__(self,num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
+                learning_rate = 0.01, discount_factor = 0.9, lambda1 = 0.8,train_result_file = None):   
+                
+        super().__init__(num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
+                learning_rate = 0.01, discount_factor = discount_factor,train_result_file = train_result_file)
+                
+        self.lambda1 = lambda1        
+        if not train_result_file:
+            self.e = np.zeros(len(self.w))  # eligibility trace 
+        else:
+            hf = h5py.File(train_result_file,'r')
+            trained_model = hf.get('trained_model')
+            self.e = trained_model.get('eligibility_trace').value
+            hf.close()
+    
+    def update(self,state,action,next_state,reward,done):
+        q_state = self.predict(state)
+        q_next_state = self.predict(next_state)
+        best_next_action = np.argmax(q_next_state)
+        td_target = reward + np.invert(done).astype(np.float32)*self.discount_factor*q_next_state[best_next_action]
+        td_error = td_target - q_state[action]
 
+        tiles = self.get_tiles(state,action)
+        for tile in tiles:
+            self.e[tile] += 1
 
-
-
-
+        self.w = self.w + self.learning_rate*td_error*self.e
+        self.e *= self.discount_factor*self.lambda1
+        return td_error
 
 
 def fixed_threshold_policy(state,warning_threshold_ttc = 8):

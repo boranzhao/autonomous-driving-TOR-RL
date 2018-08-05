@@ -14,37 +14,34 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 EpisodeStats = namedtuple("Stats",["episode_lengths", "episode_rewards",
-    "episode_crashes","episode_near_crashes","episode_FP_warnings","episode_FN_warnings"])
+    "episode_crashes","episode_near_crashes","episode_FP_warnings","episode_FN_warnings","episode_td_error_rms"])
 
 
-def plot_episode_stats(stats, smoothing_window=3, noshow=False):
+def plot_episode_stats(stats, smoothing_window=5, noshow=False):
     # Plot the episode length over time
-    fig1 = plt.figure(figsize=(10,5))
+    fig1 = plt.figure(figsize=(10,8))
+    plt.subplot(3,1,1)
+    rewards_smoothed = pd.Series(stats.episode_rewards).rolling(smoothing_window, min_periods=smoothing_window).mean()
+    plt.plot(rewards_smoothed)
+    plt.xlabel("Episode")
+    plt.ylabel("Episode Reward (Smoothed)")
+    plt.title("Episode Reward (Smoothed over window size {}), Length and TD-error over Time".format(smoothing_window))
+    plt.subplot(3,1,2)
     plt.plot(stats.episode_lengths)
     plt.xlabel("Episode")
     plt.ylabel("Episode Length")
-    plt.title("Episode Length over Time")
+    plt.subplot(3,1,3)
+    plt.plot(stats.episode_td_error_rms)
+    plt.xlabel("Episode")
+    plt.ylabel("Root mean suqre of td error")
     if noshow:
         plt.close(fig1)
     else:
         pass
         # plt.show(fig1)
 
-    # Plot the episode reward over time
-    fig2 = plt.figure(figsize=(10,5))
-    rewards_smoothed = pd.Series(stats.episode_rewards).rolling(smoothing_window, min_periods=smoothing_window).mean()
-    plt.plot(rewards_smoothed)
-    plt.xlabel("Episode")
-    plt.ylabel("Episode Reward (Smoothed)")
-    plt.title("Episode Reward over Time (Smoothed over window size {})".format(smoothing_window))
-    if noshow:
-        plt.close(fig2)
-    else:
-        pass
-        # plt.show(fig2)
-
     # Plot collision and near_collisions
-    fig3 = plt.figure(figsize=(10,5))
+    fig2 = plt.figure(figsize=(10,6))
     plt.subplot(2,1,1)
     plt.plot(stats.episode_near_crashes)
     plt.xlabel("Episode")
@@ -55,9 +52,8 @@ def plot_episode_stats(stats, smoothing_window=3, noshow=False):
     plt.xlabel("Episode")
     plt.ylabel("Episode Crashes")
     
-
     # Plot false positive and false negative warnings
-    fig4 = plt.figure(figsize=(10,5))
+    fig3 = plt.figure(figsize=(10,6))
     plt.subplot(2,1,1)
     plt.plot(stats.episode_FP_warnings)
     plt.xlabel("Episode")
@@ -74,6 +70,6 @@ def plot_episode_stats(stats, smoothing_window=3, noshow=False):
         pass
         # plt.show(fig3)
 
-    plt.show(block=False)
+    # plt.show(block=False)
 
-    return fig1, fig2, fig3, fig4
+    return fig1, fig2, fig3
