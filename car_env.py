@@ -74,11 +74,12 @@ class State():
         self.time_to_collision = time_to_collision
         self.confidence_level = confidence_level
 
-class Boundary():
-    def __init__(self,position,speed=0):
+class Barrier():
+    def __init__(self,position,speed=0,length=120):
         self.position = position
+        self.length = length 
         self.speed = speed                 # Some bondaries such as a cleaning vehicle may have non-zero speed
-        self.lane = Lane.RIGHT                       # Assume the boundaries are always on the right lane on a three-lane freeway
+        self.lane = Lane.RIGHT                       # Assume the barriers are always on the right lane on a three-lane freeway
     def update_status(self,sample_time):
         self.position += self.speed/3.6*sample_time         # /3.6 is for converting from km/h to m/s
 
@@ -88,53 +89,38 @@ class TrafficEnv(gym.Env):
         'video.frames_per_second': 30
     }
 
-    def __init__(self,car,driver,num_boundaries=5,speed = 0, target_speed =100, sample_time_basic = 0.25,sample_time_action = 1,epsilon = 1e-6,discount_factor=0.9,always_penalize_warning=False):
+    def __init__(self,car,driver,num_boundaries=5,speed = 0, target_speed =100, sample_time = 0.25,epsilon = 1e-6,discount_factor=0.9,always_penalize_warning=False):
         self.car = car
         self.driver = driver
         self.action_space = VALID_ACTIONS
-        # TO DO: DEFINE THE OBSERVATION SPACE
-        # self.observation_space = Dict({'time_to_collision':[Box(low= i if i>=3 else 0, high= i+1 if i <10 else float('inf'), shape=(1,)) \
-                                #  for i in range(2,11)], 'rain':Discrete(2), '_attention_level': Discrete(3)})
         self.observation_space = Dict({'time_to_collision':Box(low= 0, high= float('inf'), shape=(1,)),\
                                  'confidence_level':Box(low= 0, high= 1.0, shape=(1,))})
         self.epsilon = epsilon          # Value for avoiding division by zero        
 
-        self.sample_time_basic = sample_time_basic
-        self.sample_time_action = sample_time_action
+        self.sample_time = sample_time
         
-        self.learning_frequency = int(self.sample_time_action*5/self.sample_time_basic)    
-
-        # Create the system boundaries
-        self.boundaries = []
+        # Create the barriers
+        self.barriers = []
         for i in range(num_boundaries):
-            boundary = Boundary((i+1)*1000)
-            self.boundaries.append(boundary)
+            barrier = Barrier((i+1)*1000)
+            self.barriers.append(barrier)
         
-        self.relative_distance = max(self.boundaries[0].position - self.car.position,0)                     # unit: m
-        self.relative_velocity = self.car.speed - self.boundaries[0].speed                           # unit: km/h
+        self.relative_distance = max(self.barriers[0].position - self.car.position,0)                     # unit: m
+        self.relative_velocity = self.car.speed - self.barriers[0].speed                           # unit: km/h
         self.index_boundary_ahead = 0
 
         self.state =State(time_to_collision =float('inf'), confidence_level=0.5)
-
-        self.current_time = 0                                     # in terms of steps in sample_time_basic
 
         self.min_safe_ttc = 1                                     # minimum safe ttc; driver will not have enough time to respond if ttc is smaller than this value
 
         self.num_near_crashes = 0                                 # number of near crashes
         self.num_crashes = 0                                      # number of crashes
         
-        # Boolean variables to indicate whether crash or near crash happened or
+        # Boolean variables to indicate whether crash or near crash happened 
         self.crash = False
         self.near_crash = False
        
-        # for rendering 
-        self.viewer = None
-        self.MIN_POSITION = 0 
-        self.MAX_POSITION = 500
-        self.barrier_length = 150 
-
         self.reward_range = (-float('inf'),float('inf'))
-
         self.warning_action = NOT_WARN
 
         self.discount_factor = discount_factor                  # for discounting the reward in accumulating the reward in driver intervening
@@ -144,9 +130,13 @@ class TrafficEnv(gym.Env):
 
         self.always_penalize_warning = always_penalize_warning
 
+        # for rendering 
+        self.viewer = None
+        self.MIN_POSITION = 0 
+        self.MAX_POSITION = 500
+
     def reset(self):
         self.car.reset()
-
         self.index_boundary_ahead = 0
         self.update_state()
 
@@ -156,7 +146,6 @@ class TrafficEnv(gym.Env):
         self.near_crash = False 
 
         self.driver_emergency_action = False
-
         self.driver.reset()
 
         self.driver.driver_mode = DriverMode.DRIVE_TO_SPEED
@@ -164,14 +153,13 @@ class TrafficEnv(gym.Env):
 
         return np.array([self.state.time_to_collision,self.state.confidence_level])
 
-    def step(self,action,enforce_safety=False):
+    def step(self,action):
         """
         This function simulates executing one action (WARN or NOT_WARN) to the environment
         """
-        assert(action in self.action_space)
         self.warning_action = action 
-
         reward = 0
+
         # Take-over request (i.e. the warning) should only be issued when driver is distracted, 
         # i.e. the car is in autonomous driving mode
         if self.driver.driver_mode == DriverMode.BE_DISTRACTED and action == WARN:
@@ -179,26 +167,22 @@ class TrafficEnv(gym.Env):
 
         # Update driver status
         self.driver.update_status(self.car, self.state.time_to_collision, self.relative_distance,self.relative_velocity,
-                                 self.warning_action, self.current_time,self.sample_time_basic)
+                                 self.warning_action,self.sample_time)
 
         # Update car status
-        self.car.update_status(self.driver,self.sample_time_basic)
+        self.car.update_status(self.driver,self.sample_time)
 
-        # Update boundary status
-        for boundary in self.boundaries:
-            boundary.update_status(self.sample_time_basic)
+        # Update barrier status
+        for barrier in self.barriers:
+            barrier.update_status(self.sample_time)
 
-        # Update ther index of the boundary ahead
-        if self.car.position > self.boundaries[self.index_boundary_ahead].position and self.car.lane != Lane.RIGHT:
-            self.index_boundary_ahead += 1
-            
+        # Update ther index of the barrier ahead
+        if self.car.position > self.barriers[self.index_boundary_ahead].position + self.barriers[self.index_boundary_ahead].length and self.car.lane != Lane.RIGHT:
+            self.index_boundary_ahead += 1            
 
         # Update the state
         self.state.time_to_collision, self.state.confidence_level = self.update_state()        
 
-        # Increase the current_time counter 
-        self.current_time +=1  
-        
         # A near-crash happens when the longitudinal deceleration of the car is larger than 0.5g, or the lateral acceleration is larger than 0.4g,
         # or time_to_collision is smaller than 2 seconds at any time
         if (self.car.acceleration_longitudinal <= -0.5*STAND_GRAVITY or self.car.acceleration_lateral>=0.3*STAND_GRAVITY 
@@ -210,7 +194,7 @@ class TrafficEnv(gym.Env):
             self.near_crash = False
 
         # A crash happens when the relative distance is smaller than a threshold value 
-        if self.relative_distance<=0.1:
+        if self.relative_distance<=0:
             if not self.crash:
                 self.num_crashes +=1         
             self.crash = True  
@@ -232,11 +216,11 @@ class TrafficEnv(gym.Env):
                 # Emergency action ends, so an episode terminates
                 done = True
                 if self.car.lane != Lane.RIGHT:
-                    reward = 10      # get a reward after successfully circumventing a boundary 
+                    reward = 10      # get a reward after successfully circumventing a barrier 
             self.driver_emergency_action = False
 
         
-        if self.crash or self.index_boundary_ahead > len(self.boundaries)-1:
+        if self.crash or (self.car.position >= self.barriers[-1].position+self.barriers[-1].length):
             game_over = True
             done = True       # An episode is also done if there is a crash regardless of whether driver intervenes or not
         else:
@@ -248,61 +232,22 @@ class TrafficEnv(gym.Env):
         
         return np.array([self.state.time_to_collision,self.state.confidence_level]), reward, done, game_over
 
-    def calculate_the_reward(self,action,state_memory,index_next_state):
-        """
-        Calculate a reward that directly penalizes false postive and false negative warnings
-
-        NOT tested yet 
-        """
-        done = state_memory[index_next_state].done
-        if done:
-            reward = -100   # we really do not want this to happen
-        else:                
-            reward = 0                
-            driver_action = NONE
-
-            # Accumulate the reward from state to next_state 
-            for state_point in state_memory[index_next_state-self.learning_frequency+1:index_next_state+1]:
-                state = state_point.state 
-
-                # Latch the driver brake signal after the driver applies a brake
-                if driver_action != BRAKE:
-                    driver_action = state_point.driver_action   
-                else:
-                    pass
-
-                if (action == WARN and driver_action == BRAKE) or (action == NOT_WARN and driver_action != BRAKE):
-                    driver_follow_warning = 1
-                else:
-                     driver_follow_warning = -1
-                warning_issued = 1 if action == WARN else -1
-                #### TO FIX
-                reward = 0
-
-                # distance_from_safest_state = np.abs(state.time_to_collision-self.safest_ttc)
-                # distance_from_unsafest_state = np.abs(state.time_to_collision-self.unsafest_ttc)
-
-                # reward += driver_follow_warning/(distance_from_safest_state+self.epsilon) + \
-                #         warning_issued/(distance_from_unsafest_state+self.epsilon)        
-        return reward
-
     def update_state(self):
-        # Update relative distance and relative speed        
-        
-        if self.index_boundary_ahead < len(self.boundaries):
-            self.relative_distance = self.boundaries[self.index_boundary_ahead].position - self.car.position
-            self.relative_velocity = self.car.speed- self.boundaries[self.index_boundary_ahead].speed
-        else:
+        # Update relative distance and relative speed  
+        if self.index_boundary_ahead>= len(self.barriers) or self.car.lane != self.barriers[self.index_boundary_ahead].lane:
             self.relative_distance = float('inf')
             self.relative_velocity = self.car.speed
-
-        # Update ttc
-        if self.car.lane != Lane.RIGHT or (self.relative_velocity <= 0 and self.relative_distance >0):
             time_to_collision = float('inf')
         else:
-            time_to_collision = self.relative_distance/(self.relative_velocity/3.6+self.epsilon)   # epsilon is added to avoid division by zero
+            self.relative_distance = self.barriers[self.index_boundary_ahead].position - self.car.position
+            self.relative_velocity = self.car.speed- self.barriers[self.index_boundary_ahead].speed
+            if self.relative_velocity <= 0 and self.relative_distance >0:
+                time_to_collision = float('inf')
+            else:
+                time_to_collision = self.relative_distance/(self.relative_velocity/3.6+self.epsilon)   # epsilon is added to avoid division by zero
+            
 
-        ## TO DO: implement the way to calculate the confidence level
+        ## TO DO: implement a realistic way to calculate the confidence level
         confidence_level = 1
 
         return time_to_collision, confidence_level
@@ -311,7 +256,7 @@ class TrafficEnv(gym.Env):
         screen_width = 600
         screen_height = 600
 
-        scale_height = screen_height /(self.MAX_POSITION-self.MIN_POSITION)  # meter 
+        scale_height =screen_height/(self.MAX_POSITION-self.MIN_POSITION)  # meter 
         scale_width = 100/(LANE_WIDTH*3)
 
         lane_left_boundary = 400
@@ -322,11 +267,8 @@ class TrafficEnv(gym.Env):
         carwidth= lane_width/2
         carlength= lane_width
 
-        # roadheight = 20
-
         if self.viewer is None:
             barrier_width = lane_width
-            barrier_length = self.barrier_length*scale_height    
 
             car_track_shift = 150    
 
@@ -336,8 +278,10 @@ class TrafficEnv(gym.Env):
             self.previous_track_pos = 0
             self.previous_car_pos = 0
             self.tracktrans = rendering.Transform()
+
+            # Add the lane marks
             for i in range(4):
-                track = rendering.make_line((lane_left_boundary+i*lane_width,0),(lane_left_boundary+i*lane_width,(len(self.boundaries)+1)*1000*scale_height))
+                track = rendering.make_line((lane_left_boundary+i*lane_width,0),(lane_left_boundary+i*lane_width,(len(self.barriers)+1)*1000*scale_height))
                 track.set_linewidth(2)
                 if i==1 or i==2:
                     track.set_linestyle(15,0x1111)
@@ -345,17 +289,26 @@ class TrafficEnv(gym.Env):
                 track.add_attr(self.tracktrans)
                 self.viewer.add_geom(track)
 
-            # add the barrier 
-            for boundary in self.boundaries:
-                l,r,t,b = -barrier_width/2, barrier_width/2, boundary.position*scale_height+barrier_length, boundary.position*scale_height           
+            # Add the barriers 
+            for barrier in self.barriers:
+                l,r,t,b = -barrier_width/2, barrier_width/2, (barrier.position+barrier.length)*scale_height, barrier.position*scale_height           
                 barrier = rendering.FilledPolygon([(l,b), (l,t), (r,t), (r,b)])
                 barrier.set_color(1,0,0)
                 barrier.add_attr(rendering.Transform(translation=(right_lane_center, car_track_shift)))            
                 barrier.add_attr(self.tracktrans)
                 self.viewer.add_geom(barrier)
+            
+            # Add a line at the goal position
+            end_line = rendering.make_line((lane_left_boundary,(self.barriers[-1].position+self.barriers[-1].length)*scale_height+car_track_shift),
+                                (lane_left_boundary+3*lane_width,(self.barriers[-1].position+self.barriers[-1].length)*scale_height+car_track_shift))
+            end_line.set_linewidth(5)
+            end_line.set_linestyle(3,0x3333)
+            end_line.set_color(0,1,0)   
+            end_line.add_attr(self.tracktrans)
+            self.viewer.add_geom(end_line)
 
             
-            # add skew lines
+            # add skew lines (not in use)
             # interval = 10 
             # xs = np.array(range(interval, int((self.MAX_POSITION*2-self.MIN_POSITION)*scale+interval),interval))
             # xs1 = xs-interval            
@@ -366,8 +319,7 @@ class TrafficEnv(gym.Env):
             #     self.viewer.add_geom(line)
 
             top_y = 400
-
-            # label and circle for denoting whether warning issued
+            # Add a label and a circle for denoting whether warning issued
             warning_label = pyglet.text.Label('Warning', font_size=13,
                 x=30, y=top_y, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
@@ -377,31 +329,31 @@ class TrafficEnv(gym.Env):
             self.circle_warning.set_color(.5,.5,.5)
             self.viewer.add_geom(self.circle_warning)
             
-            # label and circle for denoting whether the driver acknowledges a warning
+            # Add a label and a circle for denoting whether the driver acknowledges a warning
             driver_acknowledge_label = pyglet.text.Label('Driver Acknowledge', font_size=13,
                 x=180, y=top_y, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(driver_acknowledge_label)
-            self.circle_driver_acknowledge = rendering.make_circle_at_pos(pos=(380,top_y+10),radius=8)
+            self.circle_driver_acknowledge = rendering.make_circle_at_pos(pos=(360,top_y+10),radius=8)
             self.circle_driver_acknowledge.set_color(.5,.5,.5)
             self.viewer.add_geom(self.circle_driver_acknowledge)
 
-            # label for total alarms
+            # Add a label for total alarms
             self.label_total_alarms = pyglet.text.Label('#Total Alarms: '+ '0', font_size=13,
                 x=30, y=top_y-40, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_total_alarms)
 
-            # label for false positive alarms
+            # Add a label for false positive alarms
             self.label_FP = pyglet.text.Label('#FP: '+ '0', font_size=13,
                 x=200, y=top_y-40,anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_FP)
 
-            # label for false negative alarms
+            # Add a label for false negative alarms
             self.label_FN = pyglet.text.Label('#FN: '+ '0', font_size=13,
                 x=300, y=top_y-40, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
@@ -409,28 +361,28 @@ class TrafficEnv(gym.Env):
             self.viewer.add_label(self.label_FN)
 
            
-            # label for number of near crashes
+            # Add a label for the number of near crashes
             self.label_num_near_crashes = pyglet.text.Label('#Near Crashes: '+ '0', font_size=13,
                 x= 30, y=top_y-80, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_num_near_crashes)
 
-            # label for crashes
+            # Add a label for the number of crashes
             self.label_num_crashes = pyglet.text.Label('#Crashes: '+ '0', font_size=13,
                 x= 200, y=top_y-80, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_num_crashes)
 
-             # label for driver mode 
+            # Add a label for driver mode 
             self.label_driver_mode = pyglet.text.Label('Driver Mode: '+ 'Stop', font_size=13,
                 x= 30, y=top_y-120, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_driver_mode)
 
-             # label for driver's trust 
+            # Add a label for driver's trust 
             self.label_driver_trust = pyglet.text.Label('Driver\'s Trust: '+ '1.00', font_size=13,
                 x= 30, y=top_y-160, anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
@@ -438,7 +390,7 @@ class TrafficEnv(gym.Env):
             self.viewer.add_label(self.label_driver_trust)
             
 
-            # Ego Car
+            # Add the car
             l,r,t,b = -carwidth/2, carwidth/2, 0, -carlength           
             car = rendering.FilledPolygon([(l,b), (l,t), (r,t), (r,b)])
             car.set_color(0,1,0)
@@ -446,49 +398,27 @@ class TrafficEnv(gym.Env):
             self.cartrans = rendering.Transform()
             car.add_attr(self.cartrans)
             self.viewer.add_geom(car)
-            # frontwheel = rendering.make_circle(carlength/2.5)
-            # frontwheel.set_color(.5, .5, .5)
-            # frontwheel.add_attr(rendering.Transform(translation=(carwidth/4,clearance)))
-            # frontwheel.add_attr(self.cartrans)
-            # self.viewer.add_geom(frontwheel)
-            # backwheel = rendering.make_circle(carlength/2.5)
-            # backwheel.add_attr(rendering.Transform(translation=(-carwidth/4,clearance)))
-            # backwheel.add_attr(self.cartrans)
-            # backwheel.set_color(.5, .5, .5)
-            # self.viewer.add_geom(backwheel)
-
-            # Leading car 
-            # leading_car = rendering.FilledPolygon([(l,b), (l,t), (r,t), (r,b)])
-            # leading_car.add_attr(rendering.Transform(translation=(0, clearance)))
-            # self.leading_cartrans = rendering.Transform()
-            # leading_car.add_attr(self.leading_cartrans)
-            # self.viewer.add_geom(leading_car)
-            # frontwheel = rendering.make_circle(carlength/2.5)
-            # frontwheel.set_color(.5, .5, .5)
-            # frontwheel.add_attr(rendering.Transform(translation=(carwidth/4,clearance)))
-            # frontwheel.add_attr(self.leading_cartrans)
-            # self.viewer.add_geom(frontwheel)
-            # backwheel = rendering.make_circle(carlength/2.5)
-            # backwheel.add_attr(rendering.Transform(translation=(-carwidth/4,clearance)))
-            # backwheel.add_attr(self.leading_cartrans)
-            # backwheel.set_color(.5, .5, .5)
-            # self.viewer.add_geom(backwheel)
+            
+            # Add a line in front of the car to denote the start of a new episode
+            start_line = rendering.make_line((lane_left_boundary,car_track_shift+carlength/2+20),(lane_left_boundary+3*lane_width,car_track_shift+carlength/2+20))
+            start_line.set_linewidth(5)
+            start_line.set_linestyle(3,0x3333)
+            start_line.set_color(0,0,1)
+            # track.add_attr(rendering.Transform(translation=(0, 0)))     
+            start_line.add_attr(self.tracktrans)
+            self.viewer.add_geom(start_line)
 
         # Note that the direction of x axis in the window  is the reverse direction of the x axis in defining the lateral position
         self.cartrans.set_translation(-self.car.position_lateral*scale_width, 0)
         
-        # Move the track towards the reversive direction so that the car looks moving forward
+        # Move the track in the reversive direction so that the car looks moving forward
         track_pos = self.previous_track_pos + (self.previous_car_pos -self.car.position)*scale_height
-        # if track_pos <= - self.MAX_POSITION:
-        #     track_pos = 0
         self.tracktrans.set_translation(0,track_pos)
         self.previous_car_pos = self.car.position
         self.previous_track_pos =  track_pos
 
-        # if self.MIN_POSITION + self.relative_distance < self.MAX_POSITION:
-        #     self.leading_cartrans.set_translation((pos+self.relative_distance)*scale,0)
-        # # set the postion of the following car to be the relative distance      
 
+        # Visualize the current status
         if self.warning_action == NOT_WARN:
             self.circle_warning.set_color(.5,.5,.5)
         else:
@@ -510,19 +440,14 @@ class TrafficEnv(gym.Env):
 
 class Driver():
     """
-    Driver model mainly defines 
-        (1) Probability of the driver to acknowledge a warning signal
-        (2) Braking intensity (normalized value)
-        (3) Response time
-        (4) Acceleration intensity (normalized value)
-        (5) Attention level
+
     """
     def __init__(self,
                  brake_intensity =0.5, 
                  accel_intensity = 0, 
                  response_time_bounds = [1.5,2.5], 
                  maximum_intervention_ttc = 8,
-                 comfort_braking_distance = 50, 
+                 comfort_follow_distance = 50,
                  driver_mode = DriverMode.STOP):
         
         ## TO DO: determine the brake intensity and accel intensity more reasonably 
@@ -537,12 +462,12 @@ class Driver():
         self.steer_intensity = 0
 
         self.response_time_bounds = response_time_bounds           
-        self.comfort_braking_distance = comfort_braking_distance  # The relative distance that the driver tries to keep between his car and the leading car 
         self.maximum_intervention_ttc = maximum_intervention_ttc  # Driver will not intervene if real ttc is larger than this value
 
         self.warning_acknowledged = False
         self.time_to_decision = float('inf')                      # Time before making a decision for the driver after acknowledging a warning signal 
         
+        self.comfort_follow_distance = comfort_follow_distance
         self.driver_mode = driver_mode
         
         self.urgency_degree = UrgencyDegree.MILD
@@ -577,9 +502,9 @@ class Driver():
             self.decide_whether_to_acknowledge()
         if self.warning_acknowledged:
             self.driver_mode = DriverMode.PERCEIVE
-            self._perceive(car,warning_action,time_to_collision,sample_time)
+            self._perceive_and_decide(car,warning_action,time_to_collision,sample_time)
 
-    def _perceive(self,car,warning_action,time_to_collision,sample_time):
+    def _perceive_and_decide(self,car,warning_action,time_to_collision,sample_time):
         """
             Perceive the surroundings and decide whether to intern after acknowledging a warning signal
         """  
@@ -612,8 +537,8 @@ class Driver():
 
     def _follow_with_safe_distance(self,car,relative_distance,relative_velocity):
         # calculate the brake and acceleration intensities to reach the target distance
-        self.brake_intensity, self.accel_intensity = self._distance_control(relative_distance, relative_velocity,self.comfort_braking_distance)
-        if car.speed >= self.target_speed and relative_distance > self.comfort_braking_distance:
+        self.brake_intensity, self.accel_intensity = self._distance_control(relative_distance, relative_velocity,self.comfort_follow_distance)
+        if car.speed >= self.target_speed and relative_distance > self.comfort_follow_distance:
             self.driver_mode = DriverMode.DRIVE_TO_SPEED
 
     def _swerve_to_left(self,car):        
@@ -745,7 +670,7 @@ class Driver():
         self.probability_to_acknowledge = 1 - (self.false_positive_warnings + self.false_negative_warnings) \
                                       /(self.total_warnings + self.false_negative_warnings+1)
     
-    def update_status(self,car,time_to_collision,relative_distance,relative_velocity,warning_action,current_time,sample_time):
+    def update_status(self,car,time_to_collision,relative_distance,relative_velocity,warning_action,sample_time):
         """         
         """
         self.update_probability_to_acknowledge()
@@ -757,7 +682,7 @@ class Driver():
         elif self.driver_mode == DriverMode.BE_DISTRACTED:
             self._be_distracted(car,warning_action,time_to_collision,sample_time)  ## TO DO: think how to pass warn
         elif self.driver_mode == DriverMode.PERCEIVE:
-            self._perceive(car,warning_action,time_to_collision,sample_time)
+            self._perceive_and_decide(car,warning_action,time_to_collision,sample_time)
         elif self.driver_mode == DriverMode.SWERVE_TO_LEFT:
             self._swerve_to_left(car)
         elif self.driver_mode == DriverMode.EMERGENCY_BRAKE:

@@ -18,12 +18,11 @@ import matplotlib.pyplot as plt
 
 from lib.utilities import EpisodeStats,plot_episode_stats
 
-def modify_action_to_enforce_safety(state,action,min_ttc_for_safety=5):
+def modify_action_to_improve_safety(state,action,min_ttc_for_safety=5):
     if state[0]<= min_ttc_for_safety:
         return WARN
     else:
         return action 
-
 
 def train_agent(env,agent,num_episodes,enforce_safety = False):
     episode_stats = EpisodeStats(
@@ -60,7 +59,7 @@ def train_agent(env,agent,num_episodes,enforce_safety = False):
             if env.car.driving_mode == CarDrivingMode.AUTONOMOUS:
                 action = agent.epsilon_greedy_policy(state,epsilon=0.1)
                 if enforce_safety:
-                    modified_action = modify_action_to_enforce_safety(state,action) 
+                    modified_action = modify_action_to_improve_safety(state,action) 
                 else:
                     modified_action = action
 
@@ -120,8 +119,7 @@ def train_agent(env,agent,num_episodes,enforce_safety = False):
 
             # Only need to update the state in autonomous driving mode
             if env.car.driving_mode == CarDrivingMode.AUTONOMOUS:
-                state = next_state
-            
+                state = next_state            
     return episode_stats
 
 def save_train_results(train_results_file,agent,episode_stats):
@@ -137,7 +135,6 @@ def save_train_results(train_results_file,agent,episode_stats):
     g11.create_dataset("num_grids",data= agent.tile_coding["num_grids"])
     g1.create_dataset('eligibility_trace',data=agent.e)
 
-
     g2 = hf.create_group('episode_stats')
     g2.create_dataset('episode_rewards',data = episode_stats.episode_rewards)
     g2.create_dataset('episode_lengths',data = episode_stats.episode_lengths)
@@ -148,7 +145,6 @@ def save_train_results(train_results_file,agent,episode_stats):
     g2.create_dataset('episode_FN_warnings',data = episode_stats.episode_FN_warnings)
     hf.close()
 
-#
 # DriverStats = namedtuple('DriverStats',['brake','warning_acknowledged','brake_intensity','accel_intensity','attention_level'])
 # SimulationStats = namedtuple('SimulationStats',['relative_distance','relative_velocity','time_to_collision','action', 'driver_stats','rain'])
 
@@ -157,28 +153,21 @@ def save_train_results(train_results_file,agent,episode_stats):
 # relative distance, relative velocity, t to crash, rain, attentive state, 
 # FP & FN
 
-sample_time_basic = 0.5          # basic sample t for observing the state
-sample_time_action = 0.5         # sample t for executing an action (WARN or NOT_WARN)
+sample_time_basic = 0.5             # basic sample t for observing the state
+sample_time_action = 0.5            # sample t for executing an action (WARN or NOT_WARN)
 # sample_time_learning = 10         # sample t for learning 
 
 action_frequency = int(sample_time_action/sample_time_basic)
 # learning_frequency = int(sample_time_learning/sample_time_basic)
 
-epsilon = 0.1
-
-# # Initialize the memory for storing the simulation 
-# driver_stats = DriverStats(np.zeros(num_steps,dtype=bool),np.zeros(num_steps,dtype=bool), 
-#                 np.zeros(num_steps),np.zeros(num_steps),np.ones(num_steps,dtype=np.int8))
-# simulation_stats = SimulationStats(np.zeros(num_steps),np.zeros(num_steps),np.zeros(num_steps),
-#                     np.zeros(num_steps,dtype=bool),driver_stats,np.zeros(num_steps,dtype=bool))
+epsilon = 0.1                       # Tolerance for comparing two variables. If the difference between the variables is smaller than this value, then treat that they are equivalent. 
 
 # Initialize the traffic environment
 car = Car(speed = 0)
 driver = Driver(brake_intensity=0.5,
                 accel_intensity=0,
                 response_time_bounds=[1.5,2.5],
-                maximum_intervention_ttc = 6,
-                comfort_braking_distance= 50)
+                maximum_intervention_ttc = 6)
 env = TrafficEnv(car,driver,always_penalize_warning=False)
 
 # Creat the directory for monitoring
@@ -194,9 +183,9 @@ if not os.path.exists(monitor_folder):
 
 agent = Q_Lambda_LFA(num_actions=2,state_bounds=np.array([[0,0],[15,1]]),
                 tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
-                learning_rate=0.04,discount_factor=0.998,lambda1=0.8, train_result_file="monitor-2018-08-03-2245/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
+                learning_rate=0.02,discount_factor=0.998,lambda1=0.8, train_result_file="monitor-2018-08-06-0939/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
 
-episode_stats = train_agent(env,agent,10,enforce_safety=False)
+episode_stats = train_agent(env,agent,100,enforce_safety=False)
 
 
 # save train results
@@ -217,91 +206,5 @@ plt.show()
 
 exit()
 
-
-
-
-
-
-for t in range(num_steps):
-    # render
-    env.render()
-
-    # Observe and store the states
-    state,brake,done = env.update_state(action)   
-
-    # Record the simulation data 
-    driver_stats.brake[t] = brake
-    driver_stats.warning_acknowledged[t] = env.car.driver.warning_acknowledged
-    driver_stats.brake_intensity[t] =  env.car.driver.brake_intensity
-    driver_stats.accel_intensity[t] =  env.car.driver.accel_intensity
-    driver_stats.attention_level[t] = state.driver_attention_level
-
-    simulation_stats.relative_distance[t]  = env.relative_distance
-    simulation_stats.relative_velocity[t]  = env.relative_velocity
-    simulation_stats.time_to_collision[t]  = state.time_to_collision
-    simulation_stats.action[t]  = action
-    simulation_stats.rain[t]  = state.rain
-
-    if done:
-        env.reset()
-        state,brake,done = env.update_state()
-            
-    # Action 
-    if t % action_frequency == 0:
-        action = fixed_threshold_policy(state)
-        env.step(action)
-
-
-
-# Plot the simulation results 
-
-simu_time = np.array(range(num_steps))*sample_time_basic
-
-plt.figure()
-plt.subplot(3,2,1)
-plt.plot(simu_time, simulation_stats.relative_distance)
-plt.ylabel('RD [m]')
-plt.xlabel('Time [s]')
-plt.subplot(3,2,2)
-plt.plot(simu_time,simulation_stats.relative_velocity)
-plt.ylabel('RV [m/s]')
-plt.xlabel('Time [s]')
-plt.subplot(3,2,3)
-plt.plot(simu_time,simulation_stats.time_to_collision)
-plt.ylabel('Time to crash [s]')
-plt.xlabel('Time [s]')
-plt.subplot(3,2,5)
-plt.plot(simu_time,simulation_stats.action)
-plt.ylabel('Warning? ')
-plt.xlabel('Time [s]')
-plt.subplot(3,2,4)
-plt.plot(simu_time,simulation_stats.rain)
-plt.ylabel('Rain? ')
-plt.xlabel('Time [s]')
-
-
-plt.figure()
-plt.subplot(3,2,1)
-plt.plot(simu_time, simulation_stats.driver_stats.warning_acknowledged)
-plt.ylabel('Warning acknowledged?')
-
-plt.subplot(3,2,2)
-plt.plot(simu_time, simulation_stats.driver_stats.brake)
-plt.ylabel('Driver brake?')
-plt.xlabel('Time [s]')
-plt.subplot(3,2,3)
-plt.plot(simu_time, simulation_stats.driver_stats.attention_level)
-plt.ylabel('Attention level')
-plt.xlabel('Time [s]')
-plt.subplot(3,2,4)
-plt.plot(simu_time, simulation_stats.driver_stats.brake_intensity)
-plt.ylabel('Brake intensity [0-1]')
-plt.xlabel('Time [s]')
-plt.subplot(3,2,5)
-plt.plot(simu_time, simulation_stats.driver_stats.accel_intensity)
-plt.ylabel('Accel. intensity [0-1]')
-
-plt.xlabel('Time [s]')
-plt.show()
 
 

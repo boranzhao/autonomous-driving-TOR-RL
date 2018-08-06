@@ -127,7 +127,7 @@ driver = Driver(brake_intensity=0.5,
                 accel_intensity=0,
                 response_time_bounds=[1.5,2.5],
                 maximum_intervention_ttc = 5,
-                comfort_braking_distance= 50)
+                comfort_follow_distance= 50)
 env = TrafficEnv(car,driver)
 
 
