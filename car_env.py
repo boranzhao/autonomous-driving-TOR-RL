@@ -10,6 +10,8 @@ class CarDrivingMode(Enum):
     AUTONOMOUS = 1
     DRIVER_INTEVENTION = 2
 
+
+
 class DriverAction(Enum):
     NONE = 0
     BRAKE = 1
@@ -233,7 +235,7 @@ class TrafficEnv(gym.Env):
         return np.array([self.state.time_to_collision,self.state.confidence_level]), reward, done, game_over
 
     def update_state(self):
-        # Update relative distance and relative speed  
+        # Update relative distance, relative speed and time to collision
         if self.index_boundary_ahead>= len(self.barriers) or self.car.lane != self.barriers[self.index_boundary_ahead].lane:
             self.relative_distance = float('inf')
             self.relative_velocity = self.car.speed
@@ -496,18 +498,19 @@ class Driver():
             elif car.lane == Lane.MIDDLE:
                 self.driver_mode = DriverMode.CHANGE_TO_RIGHT 
             
-    
-    def _be_distracted(self, car,warning_action,time_to_collision,sample_time):
+    def be_distracted(self,warning_action):
         if warning_action == WARN:
             self.decide_whether_to_acknowledge()
         if self.warning_acknowledged:
             self.driver_mode = DriverMode.PERCEIVE
-            self._perceive_and_decide(car,warning_action,time_to_collision,sample_time)
 
-    def _perceive_and_decide(self,car,warning_action,time_to_collision,sample_time):
+    def perceive_and_decide(self,time_to_collision,sample_time):
         """
-            Perceive the surroundings and decide whether to intern after acknowledging a warning signal
+            Perceive the surroundings and decide whether to intervene after acknowledging a TOR
         """  
+        self.time_to_decision -= sample_time
+        self.time_to_decision = max(self.time_to_decision,0)
+
         if self.time_to_decision <=0:
             if time_to_collision > self.maximum_intervention_ttc:
                 # false positive alarms
@@ -515,7 +518,6 @@ class Driver():
                 self.driver_mode = DriverMode.BE_DISTRACTED  
                 # Reset the warning_acknoweledge flag so that the driver can go ahead to decide whether to acknowledge next warning signal
                 self.warning_acknowledged = False
-                self._be_distracted(car,warning_action,time_to_collision,sample_time)
             else: 
                 if time_to_collision >= 4:
                     self.urgency_degree = UrgencyDegree.MILD
@@ -526,22 +528,14 @@ class Driver():
                 else:
                     self.urgency_degree = UrgencyDegree.EXTREMELY_URGENT
                     self.driver_mode = DriverMode.EMERGENCY_BRAKE
-                
-                if self.driver_mode == DriverMode.SWERVE_TO_LEFT:
-                    self._swerve_to_left(car)
-                elif self.driver_mode == DriverMode.EMERGENCY_BRAKE:
-                    self._emergy_brake(car)              
 
-        self.time_to_decision -= sample_time
-        self.time_to_decision = max(self.time_to_decision,0)
-
-    def _follow_with_safe_distance(self,car,relative_distance,relative_velocity):
+    def follow_with_safe_distance(self,car,relative_distance,relative_velocity):
         # calculate the brake and acceleration intensities to reach the target distance
         self.brake_intensity, self.accel_intensity = self._distance_control(relative_distance, relative_velocity,self.comfort_follow_distance)
         if car.speed >= self.target_speed and relative_distance > self.comfort_follow_distance:
             self.driver_mode = DriverMode.DRIVE_TO_SPEED
 
-    def _swerve_to_left(self,car):        
+    def swerve_to_left(self,car):        
         if abs(car.speed_lateral)<1e-1 and abs(car.position_lateral-LANE_WIDTH)<1e-1:
             self.warning_acknowledged = False
             self.urgency_degree = UrgencyDegree.MILD            
@@ -550,7 +544,7 @@ class Driver():
         else:
             self.steer_intensity = self._steer_control(car, target_lateral_position=LANE_WIDTH)
         
-    def _change_to_right(self,car):
+    def change_to_right(self,car):
         if abs(car.speed_lateral)<1e-1 and abs(car.position_lateral)<1e-1:
             self.driver_mode = DriverMode.DRIVE_TO_SPEED
             self.steer_intensity = 0
@@ -560,7 +554,7 @@ class Driver():
         else:   
             self.steer_intensity = self._steer_control(car,target_lateral_position=0)
 
-    def _emergy_brake(self,car):
+    def emergy_brake(self,car):
         """        
         """
         if car.speed<=0:
@@ -569,7 +563,7 @@ class Driver():
             self.brake_intensity = 0
             self.urgency_degree = UrgencyDegree.MILD
             self.driver_mode = DriverMode.SWERVE_TO_LEFT
-            self._swerve_to_left(car)
+            self.swerve_to_left(car)
         else: 
             if self.urgency_degree == UrgencyDegree.URGENT:
                 self.brake_intensity = -0.6*STAND_GRAVITY/MIN_ACCELERATION_LONG
@@ -626,13 +620,7 @@ class Driver():
         """
         To maintain a target relative_distance with a proportional-derivative controller 
         """
-        # if relative_distance<target_distance-epislon_distance:
-        #     self.brake_intensity = np.clip(Kp*(target_distance-relative_distance),0,1)
-        #     self.accel_intensity = 0
-        # elif relative_distance>target_distance+epislon_distance:
-        #     self.brake_intensity = 0
-        #     self.accel_intensity = np.clip(Kp*(relative_distance-target_distance),0,1)
-
+       
         # calculate the desired acceleration
         acceleration = (relative_distance-target_distance)*Kp-relative_velocity*Kd 
         acceleration = np.clip(acceleration,MIN_ACCELERATION_LONG,MAX_ACCELERATION_LONG)
@@ -664,9 +652,6 @@ class Driver():
         self._brake_to_stop(car)
 
     def update_probability_to_acknowledge(self):
-        # if self.total_warnings == 0:
-        #     self.probability_to_acknowledge = 1
-        # else:
         self.probability_to_acknowledge = 1 - (self.false_positive_warnings + self.false_negative_warnings) \
                                       /(self.total_warnings + self.false_negative_warnings+1)
     
@@ -680,17 +665,17 @@ class Driver():
         elif self.driver_mode == DriverMode.DRIVE_TO_SPEED:
             self.drive_to_speed(car,sample_time)
         elif self.driver_mode == DriverMode.BE_DISTRACTED:
-            self._be_distracted(car,warning_action,time_to_collision,sample_time)  ## TO DO: think how to pass warn
+            self.be_distracted(warning_action)  ## TO DO: think how to pass warn
         elif self.driver_mode == DriverMode.PERCEIVE:
-            self._perceive_and_decide(car,warning_action,time_to_collision,sample_time)
+            self.perceive_and_decide(time_to_collision,sample_time)
         elif self.driver_mode == DriverMode.SWERVE_TO_LEFT:
-            self._swerve_to_left(car)
+            self.swerve_to_left(car)
         elif self.driver_mode == DriverMode.EMERGENCY_BRAKE:
-            self._emergy_brake(car)
+            self.emergy_brake(car)
         elif self.driver_mode == DriverMode.CHANGE_TO_RIGHT:
-            self._change_to_right(car)
+            self.change_to_right(car)
         elif self.driver_mode == DriverMode.FOLLOW_WITH_SAFE_DISTANCE:
-            self._follow_with_safe_distance(car,relative_distance,relative_velocity)
+            self.follow_with_safe_distance(car,relative_distance,relative_velocity)
 
         if self.brake_intensity >0:
             self.action = BRAKE
@@ -702,7 +687,8 @@ class Driver():
             self.action = None
         
     def decide_whether_to_acknowledge(self):        
-        # Evaluate whether the driver will acknowledge an warning when he is not in response to a warning after acknowledging it 
+        # Evaluate whether the driver will acknowledge an warning 
+        # The driver can only acknowledge at most one warning at a time 
         if self.warning_acknowledged == False:
             self.total_warnings += 1
             self.warning_acknowledged = np.random.choice(VALID_DRIVER_INTENTIONS, p =[1-self.probability_to_acknowledge,self.probability_to_acknowledge])
@@ -802,20 +788,5 @@ class Car():
 
         self.update_speed(sample_time)        
 
-        # Note that for the leading car, we set driver to be None for simplicity
         if driver.get_action() != DriverAction.NONE:
             self.driving_mode = CarDrivingMode.DRIVER_INTEVENTION
-
-        
-        
-
-    
-
-
-    
-
-
-
-
-
-
