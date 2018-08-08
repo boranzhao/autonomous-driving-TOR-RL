@@ -80,8 +80,8 @@ class Barrier():
     def __init__(self,position,speed=0,length=120):
         self.position = position
         self.length = length 
-        self.speed = speed                 # Some bondaries such as a cleaning vehicle may have non-zero speed
-        self.lane = Lane.RIGHT                       # Assume the barriers are always on the right lane on a three-lane freeway
+        self.speed = speed                 # Some barriers such as a cleaning vehicle may have non-zero speed
+        self.lane = Lane.MIDDLE                  
     def update_status(self,sample_time):
         self.position += self.speed/3.6*sample_time         # /3.6 is for converting from km/h to m/s
 
@@ -179,7 +179,8 @@ class TrafficEnv(gym.Env):
             barrier.update_status(self.sample_time)
 
         # Update ther index of the barrier ahead
-        if self.car.position > self.barriers[self.index_boundary_ahead].position + self.barriers[self.index_boundary_ahead].length and self.car.lane != Lane.RIGHT:
+        if self.car.position > self.barriers[self.index_boundary_ahead].position + self.barriers[self.index_boundary_ahead].length \
+            and self.car.lane != self.barriers[self.index_boundary_ahead].lane:
             self.index_boundary_ahead += 1            
 
         # Update the state
@@ -217,7 +218,7 @@ class TrafficEnv(gym.Env):
             if self.driver_emergency_action:
                 # Emergency action ends, so an episode terminates
                 done = True
-                if self.car.lane != Lane.RIGHT:
+                if not self.crash:
                     reward = 10      # get a reward after successfully circumventing a barrier 
             self.driver_emergency_action = False
 
@@ -264,7 +265,7 @@ class TrafficEnv(gym.Env):
         lane_left_boundary = 400
         lane_width = LANE_WIDTH*scale_width
 
-        right_lane_center = lane_left_boundary+2.5*lane_width
+        middle_lane_center = lane_left_boundary+1.5*lane_width
 
         carwidth= lane_width/2
         carlength= lane_width
@@ -296,7 +297,7 @@ class TrafficEnv(gym.Env):
                 l,r,t,b = -barrier_width/2, barrier_width/2, (barrier.position+barrier.length)*scale_height, barrier.position*scale_height           
                 barrier = rendering.FilledPolygon([(l,b), (l,t), (r,t), (r,b)])
                 barrier.set_color(1,0,0)
-                barrier.add_attr(rendering.Transform(translation=(right_lane_center, car_track_shift)))            
+                barrier.add_attr(rendering.Transform(translation=(middle_lane_center, car_track_shift)))            
                 barrier.add_attr(self.tracktrans)
                 self.viewer.add_geom(barrier)
             
@@ -396,7 +397,7 @@ class TrafficEnv(gym.Env):
             l,r,t,b = -carwidth/2, carwidth/2, 0, -carlength           
             car = rendering.FilledPolygon([(l,b), (l,t), (r,t), (r,b)])
             car.set_color(0,1,0)
-            car.add_attr(rendering.Transform(translation=(right_lane_center, car_track_shift)))            
+            car.add_attr(rendering.Transform(translation=(middle_lane_center, car_track_shift)))            
             self.cartrans = rendering.Transform()
             car.add_attr(self.cartrans)
             self.viewer.add_geom(car)
@@ -493,9 +494,9 @@ class Driver():
         # calculate the brake and acceleration intensities to reach the target_speed
         self._speed_control(car.speed,target_speed)
         if abs(car.speed-target_speed) <= epislon_speed:
-            if car.lane == Lane.RIGHT:
+            if car.lane == Lane.MIDDLE:
                 self.activate_autonomous_mode(car)   
-            elif car.lane == Lane.MIDDLE:
+            elif car.lane == Lane.LEFT:
                 self.driver_mode = DriverMode.CHANGE_TO_RIGHT 
             
     def be_distracted(self,warning_action):
@@ -720,7 +721,7 @@ class Car():
         self.driving_mode = driving_mode
         self.MAX_SPEED = 120
         
-        self.lane = Lane.RIGHT
+        self.lane = Lane.MIDDLE
 
     def reset(self):
         self.position = 0
@@ -732,7 +733,7 @@ class Car():
         self.acceleration_longitudinal = 0
         self.acceleration_lateral = 0
 
-        self.lane = Lane.RIGHT 
+        self.lane = Lane.MIDDLE 
 
         self.accel_intensity = 0
         self.brake_intensity = 0.2
@@ -779,12 +780,12 @@ class Car():
 
         self.update_position(sample_time)
 
-        if self.position_lateral > 1.5*LANE_WIDTH:
+        if self.position_lateral > 0.5*LANE_WIDTH:
             self.lane = Lane.LEFT
-        elif self.position_lateral > 0.5*LANE_WIDTH:
-            self.lane = Lane.MIDDLE
+        elif self.position_lateral < -0.5*LANE_WIDTH:
+            self.lane = Lane.RIGHT
         else:
-            self.lane = Lane.RIGHT         
+            self.lane = Lane.MIDDLE         
 
         self.update_speed(sample_time)        
 
