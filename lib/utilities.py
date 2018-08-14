@@ -9,6 +9,8 @@ import matplotlib
 import numpy as np
 import pandas as pd
 
+import h5py
+
 from collections import namedtuple
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -73,3 +75,26 @@ def plot_episode_stats(stats, smoothing_window=5, noshow=False):
     # plt.show(block=False)
 
     return fig1, fig2, fig3
+
+def save_train_results(train_results_file,agent,episode_stats):
+    hf = h5py.File(train_results_file,'w')
+    g1 = hf.create_group('trained_model')
+    g1.create_dataset('lambda1',data=agent.lambda1)
+    g1.create_dataset('w',data=agent.w)
+    g1.create_dataset('discount_factor',data=agent.discount_factor)
+    g1.create_dataset('learning_rate',data=agent.learning_rate)
+    g11 = g1.create_group('tile_coding')
+    g11.create_dataset("maxSize",data = agent.tile_coding["maxSize"])
+    g11.create_dataset("num_tilings",data= agent.tile_coding["num_tilings"])
+    g11.create_dataset("num_grids",data= agent.tile_coding["num_grids"])
+    g1.create_dataset('eligibility_trace',data=agent.e)
+
+    g2 = hf.create_group('episode_stats')
+    g2.create_dataset('episode_rewards',data = episode_stats.episode_rewards)
+    g2.create_dataset('episode_lengths',data = episode_stats.episode_lengths)
+    g2.create_dataset('episode_td_error_rms',data = episode_stats.episode_td_error_rms)
+    g2.create_dataset('episode_crashes',data = episode_stats.episode_crashes)
+    g2.create_dataset('episode_near_crashes',data = episode_stats.episode_near_crashes)
+    g2.create_dataset('episode_FP_warnings',data = episode_stats.episode_FP_warnings)
+    g2.create_dataset('episode_FN_warnings',data = episode_stats.episode_FN_warnings)
+    hf.close()

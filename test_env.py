@@ -1,6 +1,6 @@
-from car_env import Driver,TrafficEnv, Car, StatePoint, ActionPoint, StepInfo
-from car_env import WARN, NOT_WARN, BRAKE, NONE, ACCEL, IGNORE, ACKNOWLEDGE, DriverMode,CarDrivingMode
-from agent import RL_Agent, fixed_threshold_policy
+from driving_env import Driver,DrivingEnv, Car
+from driving_env import WARN, NOT_WARN,  DriverMode,CarDrivingMode
+from agent import fixed_threshold_policy
 from gym.wrappers import Monitor
 from recorder import Recorder
 
@@ -128,7 +128,7 @@ driver = Driver(brake_intensity=0.5,
                 response_time_bounds=[1.5,2.5],
                 maximum_intervention_ttc = 5,
                 comfort_follow_distance= 50)
-env = TrafficEnv(car,driver)
+env = DrivingEnv(car,driver)
 
 
 # Creat the directory for monitoring

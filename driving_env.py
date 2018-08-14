@@ -10,8 +10,6 @@ class CarDrivingMode(Enum):
     AUTONOMOUS = 1
     DRIVER_INTEVENTION = 2
 
-
-
 class DriverAction(Enum):
     NONE = 0
     BRAKE = 1
@@ -36,6 +34,7 @@ class UrgencyDegree(Enum):
     MILD = 1
     URGENT = 2
     EXTREMELY_URGENT= 3
+
 """
 Define the environment of the warning system 
 state:  {time_to_collision, confidence_level}
@@ -44,22 +43,11 @@ state:  {time_to_collision, confidence_level}
 NOT_WARN = 0
 WARN = 1
 
-NONE = 0
-BRAKE = 1
-STEER = 2
-ACCEL = 3
 
 IGNORE = 0
 ACKNOWLEDGE = 1
 
-VALID_DRIVER_ACTIONS = [NONE,BRAKE,STEER]
-VALID_ACTIONS = [NOT_WARN,WARN]
-
 VALID_DRIVER_INTENTIONS = [IGNORE, ACKNOWLEDGE]
-
-ActionPoint = namedtuple('ActionPoint',['time','state','action'])
-StatePoint = namedtuple('StatePoint',['time','state','driver_action','done'])
-StepInfo = namedtuple('StepInfo',['state','action','next_state','reward','done'])
 
 STAND_GRAVITY = 9.8
 MIN_ACCELERATION_LONG = -1*STAND_GRAVITY   # Maximum longitudinal deceleration during braking a car
@@ -68,11 +56,11 @@ MAX_ACCELERATION_LAT = STAND_GRAVITY      # Maximum later acceleration
 
 LANE_WIDTH = 3.7                # the width of a lane on the freeway
 
-epislon_speed = 0.5             # miles/hour
-epislon_distance = 1            # m
+epislon_speed = 0.5             # tolerance for evaluating whether a target speed is reached
+epislon_distance = 1            # tolerance for evalu
 
 class State():
-    def __init__(self,time_to_collision =float('inf'), confidence_level = 0.5):
+    def __init__(self,time_to_collision =float('inf'), confidence_level = 1):
         self.time_to_collision = time_to_collision
         self.confidence_level = confidence_level
 
@@ -85,20 +73,18 @@ class Barrier():
     def update_status(self,sample_time):
         self.position += self.speed/3.6*sample_time         # /3.6 is for converting from km/h to m/s
 
-class TrafficEnv(gym.Env):
+class DrivingEnv(gym.Env):
     metadata = {
         'render.modes': ['human', 'rgb_array'],
         'video.frames_per_second': 30
     }
 
-    def __init__(self,car,driver,num_boundaries=5,speed = 0, target_speed =100, sample_time = 0.25,epsilon = 1e-6,discount_factor=0.9,always_penalize_warning=False):
+    def __init__(self,car,driver,num_boundaries=5,speed = 0, target_speed =100, sample_time = 0.25,discount_factor=0.9,always_penalize_warning = True):
         self.car = car
         self.driver = driver
-        self.action_space = VALID_ACTIONS
+        self.action_space = [NOT_WARN,WARN]
         self.observation_space = Dict({'time_to_collision':Box(low= 0, high= float('inf'), shape=(1,)),\
                                  'confidence_level':Box(low= 0, high= 1.0, shape=(1,))})
-        self.epsilon = epsilon          # Value for avoiding division by zero        
-
         self.sample_time = sample_time
         
         # Create the barriers
@@ -111,7 +97,7 @@ class TrafficEnv(gym.Env):
         self.relative_velocity = self.car.speed - self.barriers[0].speed                           # unit: km/h
         self.index_boundary_ahead = 0
 
-        self.state =State(time_to_collision =float('inf'), confidence_level=0.5)
+        self.state =State(time_to_collision =float('inf'), confidence_level=1)
 
         self.min_safe_ttc = 1                                     # minimum safe ttc; driver will not have enough time to respond if ttc is smaller than this value
 
@@ -127,10 +113,9 @@ class TrafficEnv(gym.Env):
 
         self.discount_factor = discount_factor                  # for discounting the reward in accumulating the reward in driver intervening
         self.accumulated_reward = 0
-
         self.driver_emergency_action = False
 
-        self.always_penalize_warning = always_penalize_warning
+        self.always_penalize_warning = always_penalize_warning  # set this to True will help reduce the false positive warnings
 
         # for rendering 
         self.viewer = None
@@ -206,7 +191,7 @@ class TrafficEnv(gym.Env):
         
         # Update the reward based on current state 
         if self.crash:
-            reward = -10            # get a large penalty for a crash 
+            reward = -100            # get a large penalty for a crash 
         elif self.near_crash:
             reward = -1             # get a penalty for a near-crash
         
@@ -232,7 +217,7 @@ class TrafficEnv(gym.Env):
         if self.always_penalize_warning and action== WARN:
             reward -= 0.4
 
-        
+        # print(self.relative_distance)
         return np.array([self.state.time_to_collision,self.state.confidence_level]), reward, done, game_over
 
     def update_state(self):
@@ -247,7 +232,7 @@ class TrafficEnv(gym.Env):
             if self.relative_velocity <= 0 and self.relative_distance >0:
                 time_to_collision = float('inf')
             else:
-                time_to_collision = self.relative_distance/(self.relative_velocity/3.6+self.epsilon)   # epsilon is added to avoid division by zero
+                time_to_collision = self.relative_distance/(self.relative_velocity/3.6+1e-6)   # 1e-6 is added to avoid division by zero
             
 
         ## TO DO: implement a realistic way to calculate the confidence level
@@ -420,7 +405,6 @@ class TrafficEnv(gym.Env):
         self.previous_car_pos = self.car.position
         self.previous_track_pos =  track_pos
 
-
         # Visualize the current status
         if self.warning_action == NOT_WARN:
             self.circle_warning.set_color(.5,.5,.5)
@@ -523,7 +507,7 @@ class Driver():
                 if time_to_collision >= 4:
                     self.urgency_degree = UrgencyDegree.MILD
                     self.driver_mode = DriverMode.SWERVE_TO_LEFT 
-                elif time_to_collision >= 2:
+                elif time_to_collision >= 2.5:
                     self.urgency_degree = UrgencyDegree.URGENT
                     self.driver_mode = np.random.choice([DriverMode.SWERVE_TO_LEFT,DriverMode.EMERGENCY_BRAKE])
                 else:
@@ -567,7 +551,7 @@ class Driver():
             self.swerve_to_left(car)
         else: 
             if self.urgency_degree == UrgencyDegree.URGENT:
-                self.brake_intensity = -0.6*STAND_GRAVITY/MIN_ACCELERATION_LONG
+                self.brake_intensity = -0.8*STAND_GRAVITY/MIN_ACCELERATION_LONG
             elif self.urgency_degree == UrgencyDegree.EXTREMELY_URGENT:
                 self.brake_intensity = 1
 
@@ -679,13 +663,13 @@ class Driver():
             self.follow_with_safe_distance(car,relative_distance,relative_velocity)
 
         if self.brake_intensity >0:
-            self.action = BRAKE
+            self.action = DriverAction.BRAKE
         elif self.accel_intensity >0:
-            self.action = ACCEL
+            self.action = DriverAction.ACCEL
         elif self.steer_intensity >0:
-            self.action = STEER
+            self.action = DriverAction.STEER
         else:
-            self.action = None
+            self.action = DriverAction.NONE
         
     def decide_whether_to_acknowledge(self):        
         # Evaluate whether the driver will acknowledge an warning 
