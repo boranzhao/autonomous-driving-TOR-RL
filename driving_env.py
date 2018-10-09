@@ -191,7 +191,7 @@ class DrivingEnv(gym.Env):
         
         # Update the reward based on current state 
         if self.crash:
-            reward = -100            # get a large penalty for a crash 
+            reward = -10            # get a large penalty for a crash 
         elif self.near_crash:
             reward = -1             # get a penalty for a near-crash
         
@@ -215,7 +215,7 @@ class DrivingEnv(gym.Env):
             game_over = False      
 
         if self.always_penalize_warning and action== WARN:
-            reward -= 0.4
+            reward -= 0.5
 
         # print(self.relative_distance)
         return np.array([self.state.time_to_collision,self.state.confidence_level]), reward, done, game_over

@@ -76,7 +76,7 @@ def plot_episode_stats(stats, smoothing_window=5, noshow=False):
 
     return fig1, fig2, fig3
 
-def save_train_results(train_results_file,agent,episode_stats):
+def save_train_results(train_results_file,agent,episode_stats,driver,min_ttc_for_safety):
     hf = h5py.File(train_results_file,'w')
     g1 = hf.create_group('trained_model')
     g1.create_dataset('lambda1',data=agent.lambda1)
@@ -88,6 +88,7 @@ def save_train_results(train_results_file,agent,episode_stats):
     g11.create_dataset("num_tilings",data= agent.tile_coding["num_tilings"])
     g11.create_dataset("num_grids",data= agent.tile_coding["num_grids"])
     g1.create_dataset('eligibility_trace',data=agent.e)
+    g1.create_dataset('min_ttc_for_safety',data=min_ttc_for_safety)
 
     g2 = hf.create_group('episode_stats')
     g2.create_dataset('episode_rewards',data = episode_stats.episode_rewards)
@@ -97,4 +98,11 @@ def save_train_results(train_results_file,agent,episode_stats):
     g2.create_dataset('episode_near_crashes',data = episode_stats.episode_near_crashes)
     g2.create_dataset('episode_FP_warnings',data = episode_stats.episode_FP_warnings)
     g2.create_dataset('episode_FN_warnings',data = episode_stats.episode_FN_warnings)
+
+
+    g3 = hf.create_group('driver')
+    g3.create_dataset('response_time_bounds',data =driver.response_time_bounds)
+    g3.create_dataset('maximum_intervention_ttc',data =driver.maximum_intervention_ttc)
+
+
     hf.close()

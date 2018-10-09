@@ -65,17 +65,18 @@ class Q_Agent_LFA():
         # Sample an action according to the probabilities
         return np.random.choice(np.arange(self.nA), p = action_probs)
 
-    def select_action(self,state):
-        return self.epsilon_greedy_policy(state)
+    def select_action(self,state,epsilon):
+        ############################ setting to 0 will not allow exploration #########
+        return self.epsilon_greedy_policy(state,epsilon)
 
 
     def predict(self,state):
         """
-        Give a state, predict the state-action values for all states 
+        Give a state, predict the state-action values for all actions
         """
         q_s = np.zeros(self.nA)
         for a in range(self.nA):
-            my_tiles = get_tiles(self.iht,self.num_tilings,self.tile_scale,state)
+            my_tiles = get_tiles(self.iht,self.num_tilings,self.tile_scale,state,a)
             q_s[a] = get_parameterXfeature(self.w,my_tiles)
         return q_s
 
@@ -94,7 +95,7 @@ class Q_Lambda_LFA(Q_Agent_LFA):
     def __init__(self,num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
                 learning_rate = 0.01, discount_factor = 0.9, lambda1 = 0.8,train_result_file = None):   
                 
-        super().__init__(num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
+        super().__init__(num_actions,state_bounds,tile_coding =tile_coding,
                 learning_rate = learning_rate, discount_factor = discount_factor,train_result_file = train_result_file)
                 
         self.lambda1 = lambda1        
@@ -104,6 +105,7 @@ class Q_Lambda_LFA(Q_Agent_LFA):
             hf = h5py.File(train_result_file,'r')
             trained_model = hf.get('trained_model')
             self.e = trained_model.get('eligibility_trace').value
+
             hf.close()
     
     def update(self,state,action,next_state,reward,done,discount_gain=None):

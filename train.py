@@ -41,8 +41,8 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
     for i_episode in range(num_episodes):
         state = env.reset()
         state = clip_state(state)
-        env.render()
-        time.sleep(1)
+        # env.render()
+        # time.sleep(1)
 
         discount_gain = 1
         action = NOT_WARN
@@ -50,8 +50,8 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
         i_td_error=0
         for t in itertools.count():
             # Render
-            if t%3 == 0: 
-                env.render()
+            # if t%3 == 0: 
+            #     env.render()
 
             # Fixed-threshold strategy
             # action = fixed_threshold_policy(env.state,warning_threshold_ttc=10)
@@ -59,24 +59,25 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
             # RL agent
             # Select an action based on epsilon-greedy policy 
             # Should only be impelmented when car is in autonomous driving mode
-            FP_penalty = 0
-            if env.car.driving_mode == CarDrivingMode.AUTONOMOUS:
-                
+            FN_penalty = 0
+            if env.car.driving_mode == CarDrivingMode.AUTONOMOUS:                
                 # action = agent.epsilon_greedy_policy(state,epsilon=0.1)
-                action = agent.select_action(state)
+                # decrease the epsilon value, associated with the degree of exploration
+                epsilon = max(0.4- i_episode/100,0.01)
+                action = agent.select_action(state,epsilon=epsilon)
                 if enforce_safety:
                     modified_action,constraint_active = modify_action_to_enforce_safety(state,action) 
                     if constraint_active:
-                        # driver.false_negative_warnings +=1
-                        FP_penalty = 0
+                        driver.false_negative_warnings +=1
+                        FN_penalty = -0.5
                 else:
                     modified_action = action
 
                 next_state,reward,done,game_over = env.step(modified_action)
                 # add the penalty due to false negative warning
-                reward += FP_penalty
+                reward += FN_penalty
                 next_state = clip_state(next_state)
-                # td_error = 0
+                td_error = 0
                           
                 td_error = agent.update(state,action,next_state,reward,done,discount_gain)
 
@@ -102,6 +103,7 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
                         # clip the accumulated reward
                         #reward = np.clip(accumulated_reward,-10,0)
                         # Here it does not matter what next_state is as long as done is True
+                        ############################################
                         td_error = agent.update(state,action,next_state,accumulated_reward,True,discount_gain)
                         td_errors[i_td_error] = td_error
                         i_td_error +=1
@@ -170,8 +172,8 @@ if not os.path.exists(monitor_folder):
 state_bounds = np.array([[0,0],[15,1]])
 tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10}
 agent = Q_Lambda_LFA(num_actions=2,state_bounds=state_bounds,
-                tile_coding =tile_coding, learning_rate=0.04,
-                discount_factor=1,lambda1=0.8) #, train_result_file="monitor-2018-08-06-0939/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
+                tile_coding =tile_coding, learning_rate=0.0005,
+                discount_factor=1,lambda1=0.8) # train_result_file="monitor-2018-08-13-2106-good-fp-05-fn-05/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
 
 # agent = ActorCritic(num_actions=2,state_bounds=state_bounds,
 #                     tile_coding=tile_coding,learning_rate_w= 0.5,
@@ -179,7 +181,7 @@ agent = Q_Lambda_LFA(num_actions=2,state_bounds=state_bounds,
 #                     lambda_w = 0.8,lambda_theta = 0.8)
 
 clip_state = generate_clip_state_function(state_bounds = state_bounds)
-episode_stats = train_agent(env,agent,21,clip_state,enforce_safety=True)
+episode_stats = train_agent(env,agent,100,clip_state,enforce_safety=True)
 
 
 # save train results
