@@ -99,7 +99,7 @@ class DrivingEnv(gym.Env):
 
         self.state =State(time_to_collision =float('inf'), confidence_level=1)
 
-        self.min_safe_ttc = 1                                     # minimum safe ttc; driver will not have enough time to respond if ttc is smaller than this value
+        self.min_safe_ttc = 0.5                                   # minimum safe ttc; driver will not have enough time to respond if ttc is smaller than this value
 
         self.num_near_crashes = 0                                 # number of near crashes
         self.num_crashes = 0                                      # number of crashes

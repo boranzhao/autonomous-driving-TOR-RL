@@ -48,6 +48,7 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
         action = NOT_WARN
         td_errors = np.zeros(10000)
         i_td_error=0
+        total_warnings = 0
         for t in itertools.count():
             # Render
             # if t%3 == 0: 
@@ -69,9 +70,12 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
                     modified_action,constraint_active = modify_action_to_enforce_safety(state,action) 
                     if constraint_active:
                         driver.false_negative_warnings +=1
-                        FN_penalty = -0.5
+                        FN_penalty = 0 # -0.5
                 else:
                     modified_action = action
+
+                if modified_action == WARN:
+                    total_warnings += 1
 
                 next_state,reward,done,game_over = env.step(modified_action)
                 # add the penalty due to false negative warning
@@ -119,6 +123,8 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
             #     env.car.speed,env.car.lane.name,env.relative_distance,env.car.brake_intensity,env.car.steer_intensity,env.car.driving_mode.name[:6],env.driver.driver_mode.name))
 
             if done:
+                pass
+            if game_over:
                 episode_stats.episode_lengths[i_episode] = t
                 episode_stats.episode_crashes[i_episode] = env.num_crashes   
                 episode_stats.episode_near_crashes[i_episode] = env.num_near_crashes
@@ -126,10 +132,10 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
                 episode_stats.episode_FN_warnings[i_episode] = env.driver.false_negative_warnings
                 episode_stats.episode_td_error_rms[i_episode] = np.sqrt(np.mean(np.array(td_errors[0:i_td_error])**2))
                 
-            if game_over:
-                print("Episode:{}, reward:{:.2f}, crashes:{:d}, near_crashes:{:d}, FP_warnings:{:d}, FN_warnings:{:d}".format(
+                print("Episode:{}, reward:{:.2f}, crashes:{:d}, near_crashes:{:d}, toal_warnings:{:d}, FP_warnings:{:d}, FN_warnings:{:d}".format(
                 i_episode,episode_stats.episode_rewards[i_episode],
                 episode_stats.episode_crashes[i_episode],episode_stats.episode_near_crashes[i_episode],
+                total_warnings,
                 episode_stats.episode_FP_warnings[i_episode],episode_stats.episode_FN_warnings[i_episode]))
 
                 env.render()
