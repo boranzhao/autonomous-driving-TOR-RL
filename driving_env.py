@@ -215,7 +215,7 @@ class DrivingEnv(gym.Env):
             game_over = False      
 
         if self.always_penalize_warning and action== WARN:
-            reward -= 0.5
+            reward -= 0.2
 
         # print(self.relative_distance)
         return np.array([self.state.time_to_collision,self.state.confidence_level]), reward, done, game_over

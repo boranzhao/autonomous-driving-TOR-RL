@@ -8,42 +8,62 @@ from driving_env import WARN, NOT_WARN
 from collections import namedtuple 
 import h5py
 
-def normalize_state(state,state_bounds):
-    normalized_state = np.zeros(len(state))
-    normalized_state[0] = (state[0]-state_bounds[0][0])/(state_bounds[1][0]-state_bounds[0][0])
-    normalized_state[1] = (state[1]-state_bounds[0][1])/(state_bounds[1][1]-state_bounds[0][1])
-    return normalized_state 
-                        
-def normalize_action(action,num_actions):
-    return float(action)/(num_actions-1)
+# Tile_Paras = namedtuple('Tile_Paras',['maxSize','num_tilings','num_grids','feature_vec_zero',''])
 
+# utility functions
+def get_parameterXfeature(parameter_vec,tiles):
+    # parameterXfeature = 0
+    # for tile in tiles:
+    #     parameterXfeature += parameter_vec[tile]
+
+    parameterXfeature = np.sum(parameter_vec[tiles])
+
+    return parameterXfeature
+
+def get_feature_vec(self,state, action):
+    # use Fourier basis to construct the feature. With the dimension of the space as k, order of Fourier basis as n, there are (n+1)^k different features
+    # normalize the state and action so that they are in the range [0,1]        
+    sa_index = np.append(normalize_state(env,state),normalize_action(env,action))
+            
+    sc_product = [sa_index.dot((sx,sy,a)) for sx in range(self.n_basis+1) for sy in range(self.n_basis+1) for a in range(self.n_basis+1)]
+    feature_vec = np.cos(np.pi*np.array(sc_product))   
+    return feature_vec
+
+def get_tiles(iht,num_tilings,tile_scale,state,action=None):                
+    # # use tile coding to construct the feature vector
+    if action == None:
+        mytiles = tiles(iht,num_tilings,state*tile_scale)
+    else:
+        mytiles = tiles(iht,num_tilings,state*tile_scale,[action])
+
+    # feature_vec = self.feature_vec_init
+    # feature_vec[mytiles] = 1
+    return mytiles
 
 class Q_Agent_LFA():
     """
     An agent for off-policy q learning with linear function approximation and tile coding or Fourier basis for the features
     """
-    def __init__(self,num_actions,state_bounds,n_basis=3,
+    def __init__(self,num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
                 learning_rate = 0.01, discount_factor = 0.9,train_result_file = None):   
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.nA = num_actions
-        self.n_basis = n_basis   # order of Fourier basis
-        self.w = np.zeros((self.n_basis+1)**3) # 3 is the dimension of the (s,a) space
-        self.state_bounds = state_bounds
-        self.name = "q-learning"
-        if train_result_file:
+        # for using tile coding to construct the feature vector            
+        self.tile_coding = tile_coding
+        self.maxSize = tile_coding['maxSize']
+        self.iht = IHT(self.maxSize)  #initialize the hash table 
+        self.num_tilings = tile_coding['num_tilings']
+        self.tile_scale = tile_coding['num_grids']/(state_bounds[1]-state_bounds[0])
+        self.feature_vec_zero = np.zeros(self.maxSize)
+    
+        if not train_result_file:
+            self.w = np.zeros(self.maxSize) 
+        else:
             hf = h5py.File(train_result_file,'r')
             trained_model = hf.get('trained_model')
             self.w = trained_model.get('w').value
             hf.close()
-
-    def get_feature_vec(self,state, action):
-        # use Fourier basis to construct the feature. With the dimension of the space as k, order of Fourier basis as n, there are (n+1)^k different features
-        # normalize the state and action so that they are in the range [0,1]        
-        sa_index = np.append(normalize_state(state,self.state_bounds),normalize_action(action,self.nA))              
-        sc_product = [sa_index.dot((sx,sy,a)) for sx in range(self.n_basis+1) for sy in range(self.n_basis+1) for a in range(self.n_basis+1)]
-        feature_vec = np.cos(np.pi*np.array(sc_product))   
-        return feature_vec
 
     def epsilon_greedy_policy(self,state, epsilon =0.1):
         # Get the probabilities for all the actions
@@ -56,7 +76,7 @@ class Q_Agent_LFA():
         return np.random.choice(np.arange(self.nA), p = action_probs)
 
     def select_action(self,state,epsilon):
-        ############################ setting to 0 will de-activate the exploration #########
+        ############################ setting to 0 will not allow exploration #########
         return self.epsilon_greedy_policy(state,epsilon)
 
 
@@ -65,8 +85,9 @@ class Q_Agent_LFA():
         Give a state, predict the state-action values for all actions
         """
         q_s = np.zeros(self.nA)
-        for a in range(self.nA):        
-            q_s[a] = self.w.dot(self.get_feature_vec(state,a))
+        for a in range(self.nA):
+            my_tiles = get_tiles(self.iht,self.num_tilings,self.tile_scale,state,a)
+            q_s[a] = get_parameterXfeature(self.w,my_tiles)
         return q_s
 
     def update(self,state,action,next_state,reward,done,discount_gain=None):
@@ -75,16 +96,18 @@ class Q_Agent_LFA():
         best_next_action = np.argmax(q_next_state)
         td_target = reward + np.invert(done).astype(np.float32)*self.discount_factor*q_next_state[best_next_action]
         td_error = td_target - q_state[action]
-    
-        self.w += self.learning_rate*td_error
+
+        tiles = get_tiles(self.iht,self.num_tilings,self.tile_scale,state,action)
+        for tile in tiles:
+            self.w[tile] += self.learning_rate*td_error
 
 class Q_Lambda_LFA(Q_Agent_LFA):
-    def __init__(self,num_actions,state_bounds,n_basis = 3, learning_rate = 0.01, 
-                discount_factor = 0.9, lambda1 = 0.8,train_result_file = None):   
+    def __init__(self,num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
+                learning_rate = 0.01, discount_factor = 0.9, lambda1 = 0.8,train_result_file = None):   
                 
-        super().__init__(num_actions,state_bounds,n_basis = n_basis,
+        super().__init__(num_actions,state_bounds,tile_coding =tile_coding,
                 learning_rate = learning_rate, discount_factor = discount_factor,train_result_file = train_result_file)
-        self.name = "q-lambda"      
+                
         self.lambda1 = lambda1        
         if not train_result_file:
             self.e = np.zeros(len(self.w))  # eligibility trace 
@@ -102,36 +125,42 @@ class Q_Lambda_LFA(Q_Agent_LFA):
         td_target = reward + np.invert(done).astype(np.float32)*self.discount_factor*q_next_state[best_next_action]
         td_error = td_target - q_state[action]
 
-        self.e = self.discount_factor*self.lambda1*self.e + self.get_feature_vec(state,action)
+        tiles = get_tiles(self.iht,self.num_tilings,self.tile_scale,state,action)
+        # for tile in tiles:
+        #     self.e[tile] += 1
+        self.e[tiles] +=1 
+
         # for debugging
         if np.abs(td_error)>0:
             tmp = 1
+
         self.w += self.learning_rate*td_error*self.e
-
-        # reset the eligibility trace at the end of an episode
-        if done:
-            self.e = np.zeros(len(self.e))
-
+        self.e *= self.discount_factor*self.lambda1
         return td_error       
 
 class ActorCritic():
-    def __init__(self,num_actions,state_bounds,n_basis = 3,
+    def __init__(self,num_actions,state_bounds,tile_coding ={'maxSize':1024,'num_tilings':8,'num_grids':10},
                 learning_rate_w = 0.01, learning_rate_theta = 0.01,lambda_w = 0.8,lambda_theta = 0.8,discount_factor = 0.9,train_result_file = None):   
         self.learning_rate_w = learning_rate_w
         self.learning_rate_theta = learning_rate_theta
         self.discount_factor = discount_factor
         self.lambda_w = lambda_w
         self.lambda_theta = lambda_theta
-        self.state_bounds = state_bounds
-        self.n_basis = n_basis
+
         self.nA = num_actions
-        self.name = "actor-critic"
+        # for using tile coding to construct the feature vector
+        self.tile_coding = tile_coding
+        self.maxSize = tile_coding['maxSize']
+        self.iht = IHT(self.maxSize)  #initialize the hash table 
+        self.num_tilings = tile_coding['num_tilings']
+        self.tile_scale = tile_coding['num_grids']/(state_bounds[1]-state_bounds[0])
+        self.feature_vec_zero = np.zeros(self.maxSize)
 
         if not train_result_file:
-            self.w = np.zeros((self.n_basis+1)**2)        # k=2 b/c the dimension of the state space is 2
-            self.theta = np.zeros((self.n_basis+1)**3)      #  k =3
-            self.e_w = np.zeros(len(self.w))             # eligibility trace vector for w
-            self.e_theta = np.zeros(len(self.theta))    # eligibility trace vector for theta
+            self.w = np.zeros(self.maxSize)         # parameter vector for value estimator
+            self.theta = np.zeros(self.maxSize)     # parameter vector for value estimator
+            self.e_w = np.zeros(self.maxSize)       # eligibility trace vector for w
+            self.e_theta = np.zeros(self.maxSize)   # eligibility trace vector for theta
         else:
             hf = h5py.File(train_result_file,'r')
             trained_model = hf.get('trained_model')
@@ -141,34 +170,33 @@ class ActorCritic():
             self.e_theta = trained_model.get('e_theta').value
             hf.close()
 
-
-    def get_feature_vec(self,state, action=None):
-        # use Fourier basis to construct the feature. With the dimension of the space as k, order of Fourier basis as n, there are (n+1)^k different features
-        # normalize the state and action so that they are in the range [0,1]        
-        if action==None:
-            s_index = normalize_state(state,self.state_bounds)              
-            sc_product = [s_index.dot((sx,sy)) for sx in range(self.n_basis+1) for sy in range(self.n_basis+1)]
-        else:
-            sa_index = np.append(normalize_state(state,self.state_bounds),normalize_action(action,self.nA))              
-            sc_product = [sa_index.dot((sx,sy,a)) for sx in range(self.n_basis+1) for sy in range(self.n_basis+1) for a in range(self.n_basis+1)]
-        
-        feature_vec = np.cos(np.pi*np.array(sc_product))   
+    def get_feature_vec(self,state,action=None):
+        feature_vec = self.feature_vec_zero
+        tiles = get_tiles(self.iht,self.num_tilings,self.tile_scale,state,action)
+        feature_vec[tiles] = 1
         return feature_vec
     
     def predict_value(self, state):
         # predict the value of v(s) 
-        return self.w.dot(self.get_feature_vec(state))
+        mytiles = get_tiles(self.iht,self.num_tilings,self.tile_scale,state)
+        v_s = get_parameterXfeature(self.w,mytiles)
+        return v_s  
 
     def select_action(self,state,epsilon=None):
         action_probs = self.predict_pi_s(state)
         action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+
         return action
 
     def predict_pi_s(self, state):
         # predict the value of pi(a|s,theta) for all a
         pi_s = np.zeros(self.nA)
         for a in range(self.nA):
-            pi_s[a] = self.theta.dot(self.get_feature_vec(state,a))
+            mytiles = get_tiles(self.iht, self.num_tilings,self.tile_scale,state,a)
+            # if get_parameterXfeature(self.theta,mytiles)>1e2:
+            #     print('big number')
+            # pi_s[a] = np.exp(get_parameterXfeature(self.theta,mytiles))
+            pi_s[a] = get_parameterXfeature(self.theta,mytiles)
         # normalization     
         # pi_s = pi_s/sum(pi_s)
         
@@ -192,23 +220,22 @@ class ActorCritic():
         # Calculate the gradient of the value function
         # and then update the eligibility trace vector e_w
         grad_v = self.get_feature_vec(state)    # gradient of the value function
-        self.e_w =self.discount_factor*self.lambda_w*self.e_w+ discount_gain*grad_v
+        self.e_w += discount_gain*grad_v
 
         # Calculate the gradient of ln pi(a/s,theta) with respect to theta, which is x(s,a)-sum_b(pi(b/s,theta)*x(s,b))
         # and then update the eligiblity trace vector e_theta
         pi_s= self.predict_pi_s(state)
         grad_ln_pi = self.get_feature_vec(state,action) - sum([pi_s[b]*self.get_feature_vec(state,b) for b in range(self.nA)])
-        self.e_theta = self.discount_factor*self.lambda_theta*self.e_theta+discount_gain*grad_ln_pi
+        self.e_theta += discount_gain*grad_ln_pi
 
         # Update the parameters 
         self.w += self.learning_rate_w*td_error*self.e_w
-        self.theta += self.learning_rate_theta*td_error*self.e_theta 
+        self.theta += self.learning_rate_theta*td_error*self.e_theta
 
-        # reset the eligibility trace at the end of an episode
-        if done:
-            self.e_w = np.zeros(len(self.e_w))
-            self.e_theta = np.zeros(len(self.e_theta))  
-
+        # Update the eligibility trace vectors
+        self.e_w *= self.discount_factor*self.lambda_w
+        self.e_theta *= self.discount_factor*self.lambda_theta
+        
         return td_error
 
 def fixed_threshold_policy(state,warning_threshold_ttc = 8):

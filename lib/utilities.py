@@ -19,7 +19,7 @@ EpisodeStats = namedtuple("Stats",["episode_lengths", "episode_rewards",
     "episode_crashes","episode_near_crashes","episode_FP_warnings","episode_FN_warnings","episode_td_error_rms"])
 
 
-def plot_episode_stats(stats, smoothing_window=5, noshow=False):
+def plot_episode_stats(stats, smoothing_window=10, noshow=False):
     # Plot the episode length over time
     fig1 = plt.figure(figsize=(10,8))
     plt.subplot(3,1,1)
