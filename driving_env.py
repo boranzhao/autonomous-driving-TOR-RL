@@ -335,18 +335,18 @@ class DrivingEnv(gym.Env):
             self.viewer.add_label(self.label_total_alarms)
 
             # Add a label for false positive alarms
-            self.label_FP = pyglet.text.Label('#FP: '+ '0', font_size=13,
+            self.label_FP = pyglet.text.Label('#False-Pos. Alarms: '+ '0', font_size=13,
                 x=200, y=top_y-40,anchor_x='left', anchor_y='bottom',
                 # color=(128,128,128,255))
                 color=(0,0,0,255))
             self.viewer.add_label(self.label_FP)
 
             # Add a label for false negative alarms
-            self.label_FN = pyglet.text.Label('#FN: '+ '0', font_size=13,
-                x=300, y=top_y-40, anchor_x='left', anchor_y='bottom',
-                # color=(128,128,128,255))
-                color=(0,0,0,255))
-            self.viewer.add_label(self.label_FN)
+            # self.label_FN = pyglet.text.Label('#FN: '+ '0', font_size=13,
+            #     x=300, y=top_y-40, anchor_x='left', anchor_y='bottom',
+            #     # color=(128,128,128,255))
+            #     color=(0,0,0,255))
+            # self.viewer.add_label(self.label_FN)
 
            
             # Add a label for the number of near crashes
@@ -416,8 +416,8 @@ class DrivingEnv(gym.Env):
         else:
             self.circle_driver_acknowledge.set_color(.5,.5,.5)
 
-        self.label_FP.text = '#FP: '+ str(self.driver.false_positive_warnings)
-        self.label_FN.text = '#FN: '+ str(self.driver.false_negative_warnings)
+        self.label_FP.text = '#False-Pos. Alarms: '+ str(self.driver.false_positive_warnings)
+        # self.label_FN.text = '#FN: '+ str(self.driver.false_negative_warnings)
         self.label_total_alarms.text = '#Total Alarms: '+ str(self.driver.total_warnings)
         self.label_driver_mode.text ='Driver Mode: '+ self.driver.driver_mode.name
         self.label_num_near_crashes.text = '#Near Crashes: '+ str(self.num_near_crashes)

@@ -70,7 +70,8 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
                 if enforce_safety:
                     modified_action,constraint_active = modify_action_to_enforce_safety(state,action,min_ttc_for_safety) 
                     if constraint_active:
-                        driver.false_negative_warnings +=1
+                        if not env.driver.warning_acknowledged: 
+                            driver.false_negative_warnings +=1
                 else:
                     modified_action = action
 
@@ -191,7 +192,7 @@ if __name__== "__main__":
 
     agent = ActorCritic(num_actions=2,state_bounds=state_bounds,
                         n_basis = 5, learning_rate_w=0.002,learning_rate_theta=0.002, discount_factor=1,
-                        lambda_w = 0.95,lambda_theta = 0.95, train_result_file = train_result_file)
+                        lambda_w = 0.8,lambda_theta = 0.8, train_result_file = train_result_file)
 
     episode_stats = train_agent(env,agent,100,clip_state,enforce_safety=True,min_ttc_for_safety=min_ttc_for_safety)
 
