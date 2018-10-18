@@ -144,6 +144,8 @@ class ActorCritic():
             self.discount_factor = trained_model.get('discount_factor').value
             self.learning_rate_theta = trained_model.get('learning_rate_theta').value
             self.learning_rate_w = trained_model.get('learning_rate_w').value
+            self.n_basis = trained_model.get('Fourier_basis_order').value
+
             hf.close()
 
 

@@ -96,6 +96,7 @@ def save_train_results(train_results_file,agent,episode_stats,driver,min_ttc_for
         g1.create_dataset('eligibility_trace_w',data=agent.e_w)
         g1.create_dataset('eligibility_trace_theta',data=agent.e_theta)
 
+    g1.create_dataset('Fourier_basis_order',data= agent.n_basis)
     g1.create_dataset('min_ttc_for_safety',data=min_ttc_for_safety)
 
     g2 = hf.create_group('episode_stats')

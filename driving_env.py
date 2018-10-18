@@ -605,7 +605,6 @@ class Driver():
         """
         To maintain a target relative_distance with a proportional-derivative controller 
         """
-       
         # calculate the desired acceleration
         acceleration = (relative_distance-target_distance)*Kp-relative_velocity*Kd 
         acceleration = np.clip(acceleration,MIN_ACCELERATION_LONG,MAX_ACCELERATION_LONG)
@@ -637,8 +636,11 @@ class Driver():
         self._brake_to_stop(car)
 
     def update_probability_to_acknowledge(self):
-        self.probability_to_acknowledge = 1 - (self.false_positive_warnings + self.false_negative_warnings) \
-                                      /(self.total_warnings + self.false_negative_warnings+1)
+        # self.probability_to_acknowledge = 1 - (self.false_positive_warnings + self.false_negative_warnings) \
+        #                               /(self.total_warnings + self.false_negative_warnings+1)
+        # Modified to make the probability independent of false negative warnings because driver has no knowledge whether a warning is false negative or not
+        self.probability_to_acknowledge = 1 - (self.false_positive_warnings) \
+                                      /(self.total_warnings+0.001)  # +0.001 is for avoiding division by zero
     
     def update_status(self,car,time_to_collision,relative_distance,relative_velocity,warning_action,sample_time):
         """         

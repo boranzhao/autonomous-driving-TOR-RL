@@ -44,20 +44,13 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
     for i_episode in range(num_episodes):
         state = env.reset()
         state = clip_state(state)
-        # # Reset the eligibility traces to zero.
-        # if agent.name == "q-lambda":
-        #     agent.e = np.zeros(len(agent.e))
-        # elif agent.name == "actor-critic":
-        #     agent.e_w = np.zeros(len(agent.e_w))
-        #     agent.e_theta = np.zeros(len(agent.e_theta))
-
+        
         # env.render()
         # time.sleep(1)
         discount_gain = 1
         action = NOT_WARN
         td_errors = np.zeros(10000)
         i_td_error=0
-        total_warnings = 0
         for t in itertools.count():
             # Render
             # if t%3 == 0: 
@@ -80,9 +73,6 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
                         driver.false_negative_warnings +=1
                 else:
                     modified_action = action
-
-                if modified_action == WARN:
-                    total_warnings += 1
 
                 next_state,reward,done,game_over = env.step(modified_action)
                 next_state = clip_state(next_state)
@@ -140,7 +130,7 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
                 print("Episode:{}, reward:{:.2f}, crashes:{:d}, near_crashes:{:d}, toal_warnings:{:d}, FP_warnings:{:d}, FN_warnings:{:d}".format(
                 i_episode,episode_stats.episode_rewards[i_episode],
                 episode_stats.episode_crashes[i_episode],episode_stats.episode_near_crashes[i_episode],
-                total_warnings,
+                env.driver.total_warnings,
                 episode_stats.episode_FP_warnings[i_episode],episode_stats.episode_FN_warnings[i_episode]))
 
                 env.render()
@@ -152,82 +142,76 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
     return episode_stats
 
 
-# DriverStats = namedtuple('DriverStats',['brake','warning_acknowledged','brake_intensity','accel_intensity','attention_level'])
-# SimulationStats = namedtuple('SimulationStats',['relative_distance','relative_velocity','time_to_collision','action', 'driver_stats','rain'])
 
-# utilities the simulation results
-# Should plot the following variables:
-# relative distance, relative velocity, t to crash, rain, attentive state, 
-# FP & FN
+## Main function 
+if __name__== "__main__":
+    sample_time = 0.3             # sample time for observing the state and executing an action
 
-sample_time = 0.3             # sample time for observing the state and executing an action
+    train_result_file = None 
+    # train_result_file= 'monitor-2018-10-17-2158/train_results.h5py'   # Comment this line if do not want to use a trianed model 
 
-train_result_file = None 
-train_result_file= 'monitor-2018-10-17-2158/train_results.h5py'   # Comment this line if do not want to use a trianed model 
+    # Important parameters that will influence the training result
+    min_ttc_for_safety = 6                  # minimum ttc allowed before enforcing a warning
+    driver_response_time_bounds = [2.5,2.6]
+    driver_maximum_intervention_ttc = 6     # Driver will not intervene if ttc is larger than this value
 
-# Important parameters
-min_ttc_for_safety = 6                  # minimum ttc allowed before enforcing a warning
-driver_response_time_bounds = [2.5,2.6]
-driver_maximum_intervention_ttc = 6     # Driver will not intervene if ttc is larger than this value
+    if train_result_file != None:   
+        # load and overwrite some parameters 
+        hf = h5py.File(train_result_file,'r')
+        trained_model = hf.get('trained_model')
+        min_ttc_for_safety = trained_model.get('min_ttc_for_safety').value
+        driver_paras = hf.get('driver')
+        driver_response_time_bounds = driver_paras.get('response_time_bounds').value
+        driver_maximum_intervention_ttc = driver_paras.get('maximum_intervention_ttc').value
 
-if train_result_file != None:   
-    # load and overwrite some parameters 
-    hf = h5py.File(train_result_file,'r')
-    trained_model = hf.get('trained_model')
-    min_ttc_for_safety = trained_model.get('min_ttc_for_safety').value
-    driver_paras = hf.get('driver')
-    driver_response_time_bounds = driver_paras.get('response_time_bounds').value
-    driver_maximum_intervention_ttc = driver_paras.get('maximum_intervention_ttc').value
+    # Initialize the traffic environment
+    car = Car(speed = 0)
+    driver = Driver(brake_intensity=0.5,
+                    accel_intensity=0,
+                    response_time_bounds= driver_response_time_bounds,
+                    maximum_intervention_ttc = driver_maximum_intervention_ttc)
 
-# Initialize the traffic environment
-car = Car(speed = 0)
-driver = Driver(brake_intensity=0.5,
-                accel_intensity=0,
-                response_time_bounds= driver_response_time_bounds,
-                maximum_intervention_ttc = driver_maximum_intervention_ttc)
+    env = DrivingEnv(car,driver,sample_time=sample_time,always_penalize_warning=True)
 
-env = DrivingEnv(car,driver,sample_time=sample_time,always_penalize_warning=True)
+    # Creat the directory for recording videos
+    monitor_folder = os.path.join(os.getcwd(),"monitor-"+datetime.datetime.now().strftime("%Y-%m-%d-%H%M"))
+    # monitor_folder = os.path.join(os.getcwd(),"recorder")
 
-# Creat the directory for recording videos
-monitor_folder = os.path.join(os.getcwd(),"monitor-"+datetime.datetime.now().strftime("%Y-%m-%d-%H%M"))
-# monitor_folder = os.path.join(os.getcwd(),"recorder")
+    if not os.path.exists(monitor_folder):
+        os.makedirs(monitor_folder)
 
-if not os.path.exists(monitor_folder):
-    os.makedirs(monitor_folder)
+    # Add env Monitor wrapper
+    # env = Recorder(env, directory= monitor_folder, video_callable=lambda count: count % 11 == 0, resume = True)
 
-# Add env Monitor wrapper
-# env = Recorder(env, directory= monitor_folder, video_callable=lambda count: count % 11 == 0, resume = True)
-
-state_bounds = np.array([[0,0],[15,1]])
-clip_state = generate_clip_state_function(state_bounds = state_bounds)
-# agent = Q_Lambda_LFA(num_actions=2,state_bounds=state_bounds,n_basis = 3,
-#                 learning_rate=0.005,discount_factor=1,lambda1=0.95) # train_result_file="monitor-2018-08-13-2106-good-fp-05-fn-05/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
+    state_bounds = np.array([[0,0],[15,1]])
+    clip_state = generate_clip_state_function(state_bounds = state_bounds)
+    # agent = Q_Lambda_LFA(num_actions=2,state_bounds=state_bounds,n_basis = 3,
+    #                 learning_rate=0.005,discount_factor=1,lambda1=0.95) # train_result_file="monitor-2018-08-13-2106-good-fp-05-fn-05/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
 
 
-agent = ActorCritic(num_actions=2,state_bounds=state_bounds,
-                    n_basis = 5, learning_rate_w=0.002,learning_rate_theta=0.002, discount_factor=1,
-                    lambda_w = 0.95,lambda_theta = 0.95, train_result_file = train_result_file)
+    agent = ActorCritic(num_actions=2,state_bounds=state_bounds,
+                        n_basis = 5, learning_rate_w=0.002,learning_rate_theta=0.002, discount_factor=1,
+                        lambda_w = 0.95,lambda_theta = 0.95, train_result_file = train_result_file)
 
+    episode_stats = train_agent(env,agent,100,clip_state,enforce_safety=True,min_ttc_for_safety=min_ttc_for_safety)
 
-episode_stats = train_agent(env,agent,100,clip_state,enforce_safety=True,min_ttc_for_safety=min_ttc_for_safety)
+    # save train results
+    train_results_file = os.path.join(monitor_folder,"train_results.h5py")
+    save_train_results(train_results_file,agent,episode_stats,driver,min_ttc_for_safety)
 
-# save train results
-train_results_file = os.path.join(monitor_folder,"train_results.h5py")
-save_train_results(train_results_file,agent,episode_stats,driver,min_ttc_for_safety)
+    # show the figures
+    # plot the episode_stats and save corresponding figures. 
+    fig1,fig2,fig3 = plot_episode_stats(episode_stats)
 
-# show the figures
-# plot the episode_stats and save corresponding figures. 
-fig1,fig2,fig3 = plot_episode_stats(episode_stats)
+    plt.figure(fig1.number)
+    plt.savefig(os.path.join(monitor_folder,"episode_reward_length_tdError.png"))
+    plt.figure(fig2.number)
+    plt.savefig(os.path.join(monitor_folder,"episode_crashes.png"))
+    plt.figure(fig3.number)
+    plt.savefig(os.path.join(monitor_folder,"episode_false_warnings.png"))
+    plt.show()
 
-plt.figure(fig1.number)
-plt.savefig(os.path.join(monitor_folder,"episode_reward_length_tdError.png"))
-plt.figure(fig2.number)
-plt.savefig(os.path.join(monitor_folder,"episode_crashes.png"))
-plt.figure(fig3.number)
-plt.savefig(os.path.join(monitor_folder,"episode_false_warnings.png"))
-plt.show()
-
-exit()
+    exit()
 
 
 
