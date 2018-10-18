@@ -137,8 +137,13 @@ class ActorCritic():
             trained_model = hf.get('trained_model')
             self.w = trained_model.get('w').value
             self.theta = trained_model.get('theta').value
-            self.e_w = trained_model.get('e_w').value
-            self.e_theta = trained_model.get('e_theta').value
+            self.e_w = trained_model.get('eligibility_trace_w').value
+            self.e_theta = trained_model.get('eligibility_trace_theta').value
+            self.lambda_theta = trained_model.get('lambda_theta').value
+            self.lambda_w = trained_model.get('lambda_w').value
+            self.discount_factor = trained_model.get('discount_factor').value
+            self.learning_rate_theta = trained_model.get('learning_rate_theta').value
+            self.learning_rate_w = trained_model.get('learning_rate_w').value
             hf.close()
 
 
@@ -219,7 +224,7 @@ def fixed_threshold_policy(state,warning_threshold_ttc = 8):
         action = NOT_WARN
     return action
 
-def modify_action_to_enforce_safety(state,action,min_ttc_for_safety=5):
+def modify_action_to_enforce_safety(state,action,min_ttc_for_safety):
     constraint_active = False
     if state[0]<= min_ttc_for_safety:
         # The warning system should warn but did not; therefore, consider this as a false positive warning

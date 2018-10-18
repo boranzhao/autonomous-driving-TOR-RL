@@ -28,7 +28,7 @@ def generate_clip_state_function(state_bounds):
     return clip_state
 
 
-def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
+def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_safety):
     episode_stats = EpisodeStats(
         episode_lengths=np.zeros(num_episodes,dtype=np.int16),
         episode_rewards = np.zeros(num_episodes),
@@ -75,7 +75,7 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
                 epsilon = max(0.2- i_episode/100,0.05)
                 action = agent.select_action(state,epsilon=epsilon)
                 if enforce_safety:
-                    modified_action,constraint_active = modify_action_to_enforce_safety(state,action) 
+                    modified_action,constraint_active = modify_action_to_enforce_safety(state,action,min_ttc_for_safety) 
                     if constraint_active:
                         driver.false_negative_warnings +=1
                 else:
@@ -110,7 +110,7 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
                         accumulated_reward += sub_discount_gain*reward
                         # At the end of driver intervention, should perform an update based on the accumated reward.                         
                         # clip the accumulated reward
-                        accumulated_reward = np.clip(accumulated_reward,-5,5)
+                        accumulated_reward = np.clip(accumulated_reward,-10,10)
                         # Here it does not matter what next_state is as long as done is True
                         ############################################
                         td_error = agent.update(state,action,next_state,accumulated_reward,True,discount_gain)
@@ -119,7 +119,7 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
                         # Reset the accumulated reward
                         accumulated_reward = 0     
 
-                        discount_gain = discount_gain*discount_factor         
+                        discount_gain = discount_gain*discount_factor       
 
             episode_stats.episode_rewards[i_episode] += discount_gain*reward       
 
@@ -162,12 +162,30 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety = False):
 
 sample_time = 0.3             # sample time for observing the state and executing an action
 
+train_result_file = None 
+train_result_file= 'monitor-2018-10-17-2158/train_results.h5py'   # Comment this line if do not want to use a trianed model 
+
+# Important parameters
+min_ttc_for_safety = 6                  # minimum ttc allowed before enforcing a warning
+driver_response_time_bounds = [2.5,2.6]
+driver_maximum_intervention_ttc = 6     # Driver will not intervene if ttc is larger than this value
+
+if train_result_file != None:   
+    # load and overwrite some parameters 
+    hf = h5py.File(train_result_file,'r')
+    trained_model = hf.get('trained_model')
+    min_ttc_for_safety = trained_model.get('min_ttc_for_safety').value
+    driver_paras = hf.get('driver')
+    driver_response_time_bounds = driver_paras.get('response_time_bounds').value
+    driver_maximum_intervention_ttc = driver_paras.get('maximum_intervention_ttc').value
+
 # Initialize the traffic environment
 car = Car(speed = 0)
 driver = Driver(brake_intensity=0.5,
                 accel_intensity=0,
-                response_time_bounds=[1.5,1.6],
-                maximum_intervention_ttc = 6)
+                response_time_bounds= driver_response_time_bounds,
+                maximum_intervention_ttc = driver_maximum_intervention_ttc)
+
 env = DrivingEnv(car,driver,sample_time=sample_time,always_penalize_warning=True)
 
 # Creat the directory for recording videos
@@ -181,24 +199,21 @@ if not os.path.exists(monitor_folder):
 # env = Recorder(env, directory= monitor_folder, video_callable=lambda count: count % 11 == 0, resume = True)
 
 state_bounds = np.array([[0,0],[15,1]])
-
+clip_state = generate_clip_state_function(state_bounds = state_bounds)
 # agent = Q_Lambda_LFA(num_actions=2,state_bounds=state_bounds,n_basis = 3,
 #                 learning_rate=0.005,discount_factor=1,lambda1=0.95) # train_result_file="monitor-2018-08-13-2106-good-fp-05-fn-05/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
-clip_state = generate_clip_state_function(state_bounds = state_bounds)
-
 
 
 agent = ActorCritic(num_actions=2,state_bounds=state_bounds,
                     n_basis = 5, learning_rate_w=0.002,learning_rate_theta=0.002, discount_factor=1,
-                    lambda_w = 0.95,lambda_theta = 0.95)
+                    lambda_w = 0.95,lambda_theta = 0.95, train_result_file = train_result_file)
 
 
-episode_stats = train_agent(env,agent,100,clip_state,enforce_safety=True)
-
+episode_stats = train_agent(env,agent,100,clip_state,enforce_safety=True,min_ttc_for_safety=min_ttc_for_safety)
 
 # save train results
 train_results_file = os.path.join(monitor_folder,"train_results.h5py")
-# save_train_results(train_results_file,agent,episode_stats)
+save_train_results(train_results_file,agent,episode_stats,driver,min_ttc_for_safety)
 
 # show the figures
 # plot the episode_stats and save corresponding figures. 
