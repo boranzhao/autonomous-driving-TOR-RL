@@ -45,25 +45,22 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
         state = env.reset()
         state = clip_state(state)
         
-        # env.render()
-        # time.sleep(1)
+        env.render()
+        time.sleep(1)
+
         discount_gain = 1
         action = NOT_WARN
         td_errors = np.zeros(10000)
         i_td_error=0
         for t in itertools.count():
-            # Render
-            # if t%3 == 0: 
-            #     env.render()
-
-            # Fixed-threshold strategy
-            # action = fixed_threshold_policy(env.state,warning_threshold_ttc=10)
+            # Render (comment this if the running speed is low)
+            if t%3 == 0: 
+                env.render()
 
             # RL agent
             # Select an action based on epsilon-greedy policy 
             # Should only be impelmented when car is in autonomous driving mode
             if env.car.driving_mode == CarDrivingMode.AUTONOMOUS:                
-                # action = agent.epsilon_greedy_policy(state,epsilon=0.1)
                 # decrease the epsilon value, associated with the degree of exploration
                 epsilon = max(0.2- i_episode/100,0.05)
                 action = agent.select_action(state,epsilon=epsilon)
@@ -74,6 +71,9 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
                             driver.false_negative_warnings +=1
                 else:
                     modified_action = action
+
+                # Fixed-threshold strategy  (just for comparison; comment this when using RL)
+                # modified_action = fixed_threshold_policy(state[0],warning_threshold_ttc=9)
 
                 next_state,reward,done,game_over = env.step(modified_action)
                 next_state = clip_state(next_state)
@@ -114,10 +114,6 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
 
             episode_stats.episode_rewards[i_episode] += discount_gain*reward       
 
-            # Simulation information in each step
-            # print("time:{:.2f}, speed:{:.1f}, Lane:{},  RD:{:.1f}m, brake:{:.2f}, steer:{:.2f}, car_mode:{}, driver_mode:{}".format(t*sample_time_basic, 
-            #     env.car.speed,env.car.lane.name,env.relative_distance,env.car.brake_intensity,env.car.steer_intensity,env.car.driving_mode.name[:6],env.driver.driver_mode.name))
-
             if done:
                 pass
             if game_over:
@@ -142,14 +138,12 @@ def train_agent(env,agent,num_episodes,clip_state,enforce_safety,min_ttc_for_saf
                 state = next_state            
     return episode_stats
 
-
-
 ## Main function 
 if __name__== "__main__":
     sample_time = 0.3             # sample time for observing the state and executing an action
 
     train_result_file = None 
-    # train_result_file= 'monitor-2018-10-17-2158/train_results.h5py'   # Comment this line if do not want to use a trianed model 
+    train_result_file= 'train-result-actor-critic/train_results.h5py'   # Comment this line if do not want to use a trianed model 
 
     # Important parameters that will influence the training result
     min_ttc_for_safety = 6                  # minimum ttc allowed before enforcing a warning
@@ -182,19 +176,20 @@ if __name__== "__main__":
         os.makedirs(monitor_folder)
 
     # Add env Monitor wrapper
-    # env = Recorder(env, directory= monitor_folder, video_callable=lambda count: count % 11 == 0, resume = True)
+    env = Recorder(env, directory= monitor_folder, video_callable=lambda count: count % 1 == 0, resume = True)
 
     state_bounds = np.array([[0,0],[15,1]])
     clip_state = generate_clip_state_function(state_bounds = state_bounds)
+    # Q lambda does not work very well
     # agent = Q_Lambda_LFA(num_actions=2,state_bounds=state_bounds,n_basis = 3,
     #                 learning_rate=0.005,discount_factor=1,lambda1=0.95) # train_result_file="monitor-2018-08-13-2106-good-fp-05-fn-05/train_results.h5py") #"monitor-2018-08-03-2245/train_results.h5py"
 
-
+    # Actor critic with eligibility trace now works  well
     agent = ActorCritic(num_actions=2,state_bounds=state_bounds,
                         n_basis = 5, learning_rate_w=0.002,learning_rate_theta=0.002, discount_factor=1,
-                        lambda_w = 0.8,lambda_theta = 0.8, train_result_file = train_result_file)
+                        lambda_w = 0.95,lambda_theta = 0.95, train_result_file = train_result_file)
 
-    episode_stats = train_agent(env,agent,100,clip_state,enforce_safety=True,min_ttc_for_safety=min_ttc_for_safety)
+    episode_stats = train_agent(env,agent,2,clip_state,enforce_safety=True,min_ttc_for_safety=min_ttc_for_safety)
 
     # save train results
     train_results_file = os.path.join(monitor_folder,"train_results.h5py")

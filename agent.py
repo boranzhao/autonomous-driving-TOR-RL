@@ -218,9 +218,9 @@ class ActorCritic():
 
         return td_error
 
-def fixed_threshold_policy(state,warning_threshold_ttc = 8):
-    # Issue a warning whenever the t to crash is below fixed_threshold_ttc  
-    if state.time_to_crash < warning_threshold_ttc:
+def fixed_threshold_policy(ttc,warning_threshold_ttc = 8):
+    # Issue a warning whenever the time to crash is below fixed_threshold_ttc  
+    if ttc < warning_threshold_ttc:
         action = WARN
     else:
         action = NOT_WARN
