@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.special import logsumexp
 import random
-from tiles3 import IHT, tiles
 
 from driving_env import WARN, NOT_WARN
 
